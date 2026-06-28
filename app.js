@@ -222,6 +222,13 @@ function shiftMonth(ym, delta) {
   while (m > 12) { m -= 12; y++; }
   return `${y}-${String(m).padStart(2, "0")}`;
 }
+// 担当者ごとの色（db.advisorsの並び順で固定割当）
+const ADVISOR_PALETTE = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0d9488", "#db2777", "#0891b2", "#65a30d", "#ea580c", "#4f46e5", "#be123c"];
+function advisorColor(id) {
+  if (!id) return "#94a3b8";
+  const idx = db.advisors.findIndex((a) => a.id === id);
+  return ADVISOR_PALETTE[(idx < 0 ? 0 : idx) % ADVISOR_PALETTE.length];
+}
 function renderCalendar() {
   const [y, m] = calMonth.split("-").map(Number);
   const startDow = new Date(y, m - 1, 1).getDay();
@@ -237,6 +244,10 @@ function renderCalendar() {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   const dow = ["日", "月", "火", "水", "木", "金", "土"];
 
+  // 担当者の凡例（その月に面談がある担当者）
+  const monthAdvIds = [...new Set(db.candidates.filter((c) => onCal(c) && c.scheduledAt.slice(0, 7) === calMonth).map((c) => c.advisorId || ""))];
+  const legend = monthAdvIds.map((id) => `<span class="cal-leg"><span class="cal-leg-dot" style="background:${advisorColor(id)}"></span>${id ? esc(advisorName(id)) : "未割当"}</span>`).join("");
+
   return `
     <div class="cal-head">
       <button class="btn btn-outline btn-sm" id="calPrev">←</button>
@@ -244,6 +255,7 @@ function renderCalendar() {
       <button class="btn btn-outline btn-sm" id="calNext">→</button>
       <button class="btn btn-outline btn-sm" id="calToday" style="margin-left:auto">今日へ</button>
     </div>
+    ${legend ? `<div class="cal-legend"><span class="muted" style="font-size:12px">担当者：</span>${legend}</div>` : ""}
     <div class="cal-grid">
       ${dow.map((w, i) => `<div class="cal-dow ${i === 0 ? "sun" : ""} ${i === 6 ? "sat" : ""}">${w}</div>`).join("")}
       ${cells.map((d) => {
@@ -254,10 +266,10 @@ function renderCalendar() {
           <div class="cal-day">${d}</div>
           <div class="cal-events">
             ${list.map((c) => {
-              const st = stageOf(c);
               const tm = parseSchedTime(c.scheduledText);
-              return `<div class="cal-ev" data-id="${c.id}" title="${esc(c.name)}（${esc(stageLabelOf(c))}）${tm ? " " + tm : ""}">
-                <span class="dot" style="background:${st.color}"></span>
+              const sr = sourceOf(c);
+              return `<div class="cal-ev" data-id="${c.id}" style="border-left-color:${advisorColor(c.advisorId)}" title="${esc(c.name)}｜担当:${esc(advisorName(c.advisorId))}｜流入:${esc(sr ? sr.label : "—")}｜${esc(stageLabelOf(c))}${tm ? " " + tm : ""}">
+                ${sr ? `<span class="cal-ev-src" style="color:${sr.color};background:${sr.color}22">${esc(sr.label)}</span>` : ""}
                 <span class="cal-ev-name">${tm ? `<b>${tm}</b> ` : ""}${esc(c.name)}</span>
                 ${c.stage === "booked" ? `<button class="cal-seat" data-seat="${c.id}" title="着座にする">着</button>` : ""}
               </div>`;
@@ -897,7 +909,7 @@ function importRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v8"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v9"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -920,7 +932,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v8)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v9)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }

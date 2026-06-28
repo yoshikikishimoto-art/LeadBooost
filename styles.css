@@ -299,10 +299,16 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
 .cal-day { font-size: 12px; font-weight: 700; color: var(--text-soft); }
 .cal-cell.is-today .cal-day { color: var(--accent); }
 .cal-events { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
-.cal-ev { display: flex; align-items: center; gap: 4px; font-size: 11px; background: var(--bg-subtle); border-radius: var(--r-sm); padding: 2px 5px; cursor: pointer; }
+.cal-ev { display: flex; align-items: center; gap: 4px; font-size: 11px; background: var(--bg-subtle); border-left: 3px solid var(--text-faint); border-radius: var(--r-sm); padding: 2px 5px; cursor: pointer; }
 .cal-ev:hover { background: var(--accent-soft); }
 .cal-ev .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.cal-ev-src { flex-shrink: 0; font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 3px; line-height: 1.5; letter-spacing: .02em; }
 .cal-ev-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 担当者カラーの凡例 */
+.cal-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: var(--sp-4); }
+.cal-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-soft); }
+.cal-leg-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
 .cal-seat { flex-shrink: 0; border: 0; background: var(--stage-seated); color: #fff; border-radius: var(--r-sm); font-size: 10px; font-weight: 700; padding: 1px 6px; cursor: pointer; }
 .cal-seat:hover { filter: brightness(1.06); }
 @media (max-width: 760px) {
