@@ -678,16 +678,16 @@ function newCandidateFromRow(o, src, stage, extId) {
   };
 }
 
-// 1行を取り込む。戻り値: "added" | "cancelled" | "skipped"
+// 1行を取り込む。戻り値: "added" | "cancelled" | "dup" | "old" | "reschedule" | "empty"
 function importRow(o, src) {
   const name = colVal(o, "name"), email = colVal(o, "email"), date = colVal(o, "date");
-  if (!name && !email) return "skipped";
+  if (!name && !email) return "empty";
   const status = colVal(o, "status");
   // 日程変更済みの古い行は新しい確定行に置き換わっているので取り込まない
-  if (RESCHEDULED_RE.test(status)) return "skipped";
+  if (RESCHEDULED_RE.test(status)) return "reschedule";
   // 取り込み範囲：直近N日より前の予約はスキップ（日付が読めない行は対象外＝取り込む）
   const within = Number(db.syncWithinDays) || 0;
-  if (within > 0) { const sd = parseSchedDate(date); if (sd && sd < daysAgoISO(within)) return "skipped"; }
+  if (within > 0) { const sd = parseSchedDate(date); if (sd && sd < daysAgoISO(within)) return "old"; }
   const rawId = colVal(o, "extId");
   const extId = `${src.key}|` + (rawId || (email ? `${email}|${date}` : `${name}|${date}`));
   // 重複判定は一意キー（イベントID等）のみで行う。メールは使い回されるため使わない
@@ -697,7 +697,7 @@ function importRow(o, src) {
     const reason = status || "事前キャンセル";
     if (existing) {
       // 既に終了済み、または着座以降に進んでいる予約は触らない（過去の取消が上書きしないように）
-      if (existing.stage === "closed" || existing.stage !== "booked") return "skipped";
+      if (existing.stage === "closed" || existing.stage !== "booked") return "dup";
       const from = stageOf(existing).label;
       existing.stage = "closed"; existing.closeReason = reason; existing.updatedAt = today();
       logActivity(existing, `事前キャンセル（${reason}）でステージを「${from}」→「終了」に変更`, "stage");
@@ -711,7 +711,7 @@ function importRow(o, src) {
     return "cancelled";
   }
 
-  if (existing) return "skipped";
+  if (existing) return "dup";
   const c = newCandidateFromRow(o, src, "booked", extId);
   const note = colVal(o, "note");
   logActivity(c, `${src.label}で予約${date ? `（${date}）` : ""}${note ? `／${note}` : ""}`, "create");
@@ -719,25 +719,30 @@ function importRow(o, src) {
   return "added";
 }
 
+const SYNC_BUILD = "sync-v3"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
+  console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
   if (!srcs.length) return openSyncModal();
   const btn = $("#syncBtn"), label = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "同期中…"; }
-  let added = 0, cancelled = 0, skipped = 0, failed = 0;
+  const t = { added: 0, cancelled: 0, dup: 0, old: 0, reschedule: 0, empty: 0 };
+  let failed = 0;
   for (const s of srcs) {
     try {
       const res = await fetch(s.csvUrl, { cache: "no-store" });
       if (!res.ok) throw new Error("HTTP " + res.status);
-      rowsToObjects(parseCSV(await res.text())).forEach((o) => {
-        const r = importRow(o, s);
-        if (r === "added") added++; else if (r === "cancelled") cancelled++; else skipped++;
-      });
-    } catch (e) { console.error("sync failed:", s.label, e); failed++; }
+      const objs = rowsToObjects(parseCSV(await res.text()));
+      const per = { added: 0, cancelled: 0, dup: 0, old: 0, reschedule: 0, empty: 0 };
+      objs.forEach((o) => { const r = importRow(o, s); t[r]++; per[r]++; });
+      console.log(`[${SYNC_BUILD}] 「${s.label}」: ${objs.length}行 →`, per);
+    } catch (e) { console.error(`[${SYNC_BUILD}] 取得失敗:`, s.label, e); failed++; }
   }
   saveDB(); render();
-  let msg = `同期：${added}件追加${cancelled ? `・${cancelled}件キャンセル` : ""}・${skipped}件スキップ`;
-  if (failed) msg += `（${failed}経路で取得失敗：URL/公開/CORS確認）`;
+  const skipped = t.dup + t.old + t.reschedule + t.empty;
+  let msg = `同期(v3)：${t.added}件追加${t.cancelled ? `・${t.cancelled}件キャンセル` : ""}｜スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  if (failed) msg += `／${failed}経路で取得失敗`;
+  console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
 }
