@@ -653,7 +653,14 @@ function rowsToObjects(rows) {
     .map((r) => { const o = {}; headers.forEach((h, i) => (o[h] = (r[i] || "").trim())); return o; });
 }
 function colVal(obj, field) {
-  for (const a of (SYNC_COLS[field] || [])) if (a in obj && obj[a] !== "") return obj[a];
+  const aliases = SYNC_COLS[field] || [];
+  // 1) ヘッダー名の完全一致を優先（正常なシート）
+  for (const a of aliases) if (a in obj && obj[a] !== "") return obj[a];
+  // 2) 「列名 + スペース + データ連結」の壊れたヘッダーにも対応（前方一致）
+  const keys = Object.keys(obj);
+  for (const a of aliases) for (const k of keys) {
+    if (k.startsWith(a + " ") && obj[k] !== "") return obj[k];
+  }
   return "";
 }
 
@@ -719,7 +726,7 @@ function importRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v3"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v4"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -740,7 +747,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v3)：${t.added}件追加${t.cancelled ? `・${t.cancelled}件キャンセル` : ""}｜スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v4)：${t.added}件追加${t.cancelled ? `・${t.cancelled}件キャンセル` : ""}｜スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   if (failed) msg += `／${failed}経路で取得失敗`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
