@@ -304,11 +304,23 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
 .cal-ev .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .cal-ev-src { flex-shrink: 0; font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 3px; line-height: 1.5; letter-spacing: .02em; }
 .cal-ev-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-ev-adv { flex-shrink: 0; font-size: 9px; color: #fff; padding: 0 5px; border-radius: 3px; line-height: 1.6; max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 月/週トグル */
+.seg { display: inline-flex; gap: 4px; margin-right: var(--sp-2); }
 
 /* 担当者カラーの凡例 */
 .cal-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: var(--sp-4); }
 .cal-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-soft); }
 .cal-leg-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+
+/* 週表示 */
+.cal-week .cal-wcell { min-height: calc(100vh - 300px); }
+.cal-wday { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; padding: 4px 2px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.cal-wday.sun { color: var(--negative); }
+.cal-wday.sat { color: var(--accent); }
+.cal-week .cal-events { gap: 4px; }
+.cal-week .cal-ev { font-size: 12px; padding: 4px 6px; }
 .cal-seat { flex-shrink: 0; border: 0; background: var(--stage-seated); color: #fff; border-radius: var(--r-sm); font-size: 10px; font-weight: 700; padding: 1px 6px; cursor: pointer; }
 .cal-seat:hover { filter: brightness(1.06); }
 @media (max-width: 760px) {

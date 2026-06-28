@@ -70,8 +70,9 @@ const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const uid = () => "id-" + Math.random().toString(36).slice(2, 9);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const today = () => new Date().toISOString().slice(0, 10);
-const daysAgoISO = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; // ローカル日付（toISOStringのUTCずれ回避）
+const today = () => isoLocal(new Date());
+const daysAgoISO = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return isoLocal(d); };
 const initials = (name) => (name || "?").trim().slice(0, 2);
 function fmtDate(d) { if (!d) return "—"; const x = new Date(d); return `${x.getMonth() + 1}/${x.getDate()}`; }
 function daysSince(d) { if (!d) return 0; return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); }
@@ -96,7 +97,8 @@ function logActivity(c, text, type = "note") {
 /* ---------- 状態 ---------- */
 let currentView = "dashboard";
 let filters = { q: "", stage: "", source: "", advisor: "" };
-let calMonth = today().slice(0, 7); // 面談カレンダーの表示月 YYYY-MM
+let calDate = today();      // 面談カレンダーの基準日 YYYY-MM-DD
+let calView = "month";      // "month" | "week"
 
 /* =========================================================
    ルーティング / レンダリング
@@ -215,13 +217,11 @@ function renderDashboard() {
 function activityIcon(type) { return { stage: "↗", note: "✎", create: "＋" }[type] || "•"; }
 
 /* ---------------------- 面談カレンダー ---------------------- */
-function shiftMonth(ym, delta) {
-  let [y, m] = ym.split("-").map(Number);
-  m += delta;
-  while (m < 1) { m += 12; y--; }
-  while (m > 12) { m -= 12; y++; }
-  return `${y}-${String(m).padStart(2, "0")}`;
-}
+const CAL_DOW = ["日", "月", "火", "水", "木", "金", "土"];
+function addDays(iso, n) { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return isoLocal(d); }
+function weekStart(iso) { return addDays(iso, -new Date(iso + "T00:00:00").getDay()); } // その週の日曜
+function shiftMonthDate(iso, delta) { let [y, m] = iso.split("-").map(Number); m += delta; while (m < 1) { m += 12; y--; } while (m > 12) { m -= 12; y++; } return `${y}-${String(m).padStart(2, "0")}-01`; }
+
 // 担当者ごとの色（db.advisorsの並び順で固定割当）
 const ADVISOR_PALETTE = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0d9488", "#db2777", "#0891b2", "#65a30d", "#ea580c", "#4f46e5", "#be123c"];
 function advisorColor(id) {
@@ -229,60 +229,84 @@ function advisorColor(id) {
   const idx = db.advisors.findIndex((a) => a.id === id);
   return ADVISOR_PALETTE[(idx < 0 ? 0 : idx) % ADVISOR_PALETTE.length];
 }
+// 1予約のイベント（担当者カラー＋流入タグ＋担当者名）
+function calEvent(c) {
+  const tm = parseSchedTime(c.scheduledText);
+  const sr = sourceOf(c);
+  const adv = advisorColor(c.advisorId);
+  const advNm = c.advisorId ? advisorName(c.advisorId) : "未割当";
+  return `<div class="cal-ev" data-id="${c.id}" style="border-left-color:${adv}" title="${esc(c.name)}｜担当:${esc(advNm)}｜流入:${esc(sr ? sr.label : "—")}｜${esc(stageLabelOf(c))}${tm ? " " + tm : ""}">
+    ${sr ? `<span class="cal-ev-src" style="color:${sr.color};background:${sr.color}22">${esc(sr.label)}</span>` : ""}
+    <span class="cal-ev-name">${tm ? `<b>${tm}</b> ` : ""}${esc(c.name)}</span>
+    <span class="cal-ev-adv" style="background:${adv}">${esc(advNm)}</span>
+    ${c.stage === "booked" ? `<button class="cal-seat" data-seat="${c.id}" title="着座にする">着</button>` : ""}
+  </div>`;
+}
 function renderCalendar() {
-  const [y, m] = calMonth.split("-").map(Number);
-  const startDow = new Date(y, m - 1, 1).getDay();
-  const daysInMonth = new Date(y, m, 0).getDate();
-  // 面談日(スケジュール)があり、キャンセル/終了になっていない予約のみ表示
   const onCal = (c) => c.scheduledAt && c.stage !== "closed";
   const byDate = {};
   db.candidates.forEach((c) => { if (onCal(c)) (byDate[c.scheduledAt] = byDate[c.scheduledAt] || []).push(c); });
-  const monthCount = db.candidates.filter((c) => onCal(c) && c.scheduledAt.slice(0, 7) === calMonth).length;
+  Object.values(byDate).forEach((l) => l.sort((a, b) => parseSchedTime(a.scheduledText).localeCompare(parseSchedTime(b.scheduledText))));
 
-  const cells = [];
-  for (let i = 0; i < startDow; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  const dow = ["日", "月", "火", "水", "木", "金", "土"];
-
-  // 担当者の凡例（その月に面談がある担当者）
-  const monthAdvIds = [...new Set(db.candidates.filter((c) => onCal(c) && c.scheduledAt.slice(0, 7) === calMonth).map((c) => c.advisorId || ""))];
-  const legend = monthAdvIds.map((id) => `<span class="cal-leg"><span class="cal-leg-dot" style="background:${advisorColor(id)}"></span>${id ? esc(advisorName(id)) : "未割当"}</span>`).join("");
+  const week = calView === "week";
+  const ws = weekStart(calDate), we = addDays(ws, 6);
+  const inRange = week ? (ds) => ds >= ws && ds <= we : (ds) => ds.slice(0, 7) === calDate.slice(0, 7);
+  const title = week
+    ? `${Number(ws.slice(5, 7))}/${Number(ws.slice(8, 10))} 〜 ${Number(we.slice(5, 7))}/${Number(we.slice(8, 10))}`
+    : `${calDate.slice(0, 4)}年${Number(calDate.slice(5, 7))}月`;
+  const visCount = db.candidates.filter((c) => onCal(c) && inRange(c.scheduledAt)).length;
+  const advIds = [...new Set(db.candidates.filter((c) => onCal(c) && inRange(c.scheduledAt)).map((c) => c.advisorId || ""))];
+  const legend = advIds.map((id) => `<span class="cal-leg"><span class="cal-leg-dot" style="background:${advisorColor(id)}"></span>${id ? esc(advisorName(id)) : "未割当"}</span>`).join("");
+  const tog = (v, label) => `<button class="btn btn-sm ${calView === v ? "btn-primary" : "btn-outline"}" data-calview="${v}">${label}</button>`;
 
   return `
     <div class="cal-head">
+      <div class="seg">${tog("month", "月")}${tog("week", "週")}</div>
       <button class="btn btn-outline btn-sm" id="calPrev">←</button>
-      <div class="cal-title">${y}年${m}月<span class="muted" style="font-weight:400;margin-left:8px">面談 ${monthCount}件</span></div>
+      <div class="cal-title">${title}<span class="muted" style="font-weight:400;margin-left:8px">面談 ${visCount}件</span></div>
       <button class="btn btn-outline btn-sm" id="calNext">→</button>
       <button class="btn btn-outline btn-sm" id="calToday" style="margin-left:auto">今日へ</button>
     </div>
     ${legend ? `<div class="cal-legend"><span class="muted" style="font-size:12px">担当者：</span>${legend}</div>` : ""}
-    <div class="cal-grid">
-      ${dow.map((w, i) => `<div class="cal-dow ${i === 0 ? "sun" : ""} ${i === 6 ? "sat" : ""}">${w}</div>`).join("")}
-      ${cells.map((d) => {
-        if (d === null) return `<div class="cal-cell is-empty"></div>`;
-        const ds = `${calMonth}-${String(d).padStart(2, "0")}`;
-        const list = (byDate[ds] || []).slice().sort((a, b) => parseSchedTime(a.scheduledText).localeCompare(parseSchedTime(b.scheduledText)));
-        return `<div class="cal-cell ${ds === today() ? "is-today" : ""}">
-          <div class="cal-day">${d}</div>
-          <div class="cal-events">
-            ${list.map((c) => {
-              const tm = parseSchedTime(c.scheduledText);
-              const sr = sourceOf(c);
-              return `<div class="cal-ev" data-id="${c.id}" style="border-left-color:${advisorColor(c.advisorId)}" title="${esc(c.name)}｜担当:${esc(advisorName(c.advisorId))}｜流入:${esc(sr ? sr.label : "—")}｜${esc(stageLabelOf(c))}${tm ? " " + tm : ""}">
-                ${sr ? `<span class="cal-ev-src" style="color:${sr.color};background:${sr.color}22">${esc(sr.label)}</span>` : ""}
-                <span class="cal-ev-name">${tm ? `<b>${tm}</b> ` : ""}${esc(c.name)}</span>
-                ${c.stage === "booked" ? `<button class="cal-seat" data-seat="${c.id}" title="着座にする">着</button>` : ""}
-              </div>`;
-            }).join("")}
-          </div>
-        </div>`;
-      }).join("")}
-    </div>`;
+    ${week ? calWeekGrid(byDate, ws) : calMonthGrid(byDate)}`;
+}
+function calMonthGrid(byDate) {
+  const [y, m] = calDate.split("-").map(Number);
+  const startDow = new Date(y, m - 1, 1).getDay();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  return `<div class="cal-grid">
+    ${CAL_DOW.map((w, i) => `<div class="cal-dow ${i === 0 ? "sun" : ""} ${i === 6 ? "sat" : ""}">${w}</div>`).join("")}
+    ${cells.map((d) => {
+      if (d === null) return `<div class="cal-cell is-empty"></div>`;
+      const ds = `${calDate.slice(0, 7)}-${String(d).padStart(2, "0")}`;
+      return `<div class="cal-cell ${ds === today() ? "is-today" : ""}">
+        <div class="cal-day">${d}</div>
+        <div class="cal-events">${(byDate[ds] || []).map(calEvent).join("")}</div>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+function calWeekGrid(byDate, ws) {
+  const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
+  return `<div class="cal-grid cal-week">
+    ${days.map((ds) => {
+      const dt = new Date(ds + "T00:00:00"), dw = dt.getDay();
+      const list = byDate[ds] || [];
+      return `<div class="cal-cell cal-wcell ${ds === today() ? "is-today" : ""}">
+        <div class="cal-wday ${dw === 0 ? "sun" : ""} ${dw === 6 ? "sat" : ""}">${CAL_DOW[dw]} <b>${dt.getMonth() + 1}/${dt.getDate()}</b>${list.length ? `<span class="muted" style="margin-left:auto">${list.length}件</span>` : ""}</div>
+        <div class="cal-events">${list.map(calEvent).join("")}</div>
+      </div>`;
+    }).join("")}
+  </div>`;
 }
 function bindCalendar() {
-  $("#calPrev")?.addEventListener("click", () => { calMonth = shiftMonth(calMonth, -1); render(); });
-  $("#calNext")?.addEventListener("click", () => { calMonth = shiftMonth(calMonth, 1); render(); });
-  $("#calToday")?.addEventListener("click", () => { calMonth = today().slice(0, 7); render(); });
+  $$("[data-calview]").forEach((b) => b.addEventListener("click", () => { calView = b.dataset.calview; render(); }));
+  $("#calPrev")?.addEventListener("click", () => { calDate = calView === "week" ? addDays(calDate, -7) : shiftMonthDate(calDate, -1); render(); });
+  $("#calNext")?.addEventListener("click", () => { calDate = calView === "week" ? addDays(calDate, 7) : shiftMonthDate(calDate, 1); render(); });
+  $("#calToday")?.addEventListener("click", () => { calDate = today(); render(); });
   $$(".cal-seat").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); markSeated(b.dataset.seat); }));
   $$(".cal-ev").forEach((el) => el.addEventListener("click", () => openDetail(el.dataset.id)));
 }
@@ -909,7 +933,7 @@ function importRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v9"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v11"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -932,7 +956,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v9)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v11)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
