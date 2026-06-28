@@ -26,6 +26,18 @@ function confP(k) { const c = CONFIDENCE.find((x) => x.key === k); return c ? c.
 // 読み額：入社=確定(満額)、見送り=0、それ以外=想定売上×確度
 function appYomi(a) { const fee = Number(a.fee) || 0; return a.status === "入社" ? fee : a.status === "見送り" ? 0 : Math.round(fee * confP(a.conf)); }
 const fmtYen = (n) => `¥${(Number(n) || 0).toLocaleString("en-US")}`;
+// 選考中（どこかしら選考に乗っている）＝一次面接以上の選考企業を持つ
+const SELECTION_SET = ["一次面接", "二次面接", "最終面接", "内定", "内定承諾", "入社"];
+const OFFER_SET = ["内定", "内定承諾", "入社"];
+function hasAppIn(c, set) { return (c.applications || []).some((a) => set.includes(a.status)); }
+// 読み票テーブルの絞り込み定義
+const YOMI_FILTERS = [
+  { key: "all",       label: "すべて",       match: (a) => a.status !== "見送り" },
+  { key: "proposal",  label: "提案・応諾",   match: (a) => ["提案", "応諾"].includes(a.status) },
+  { key: "doc",       label: "書類選考",     match: (a) => a.status === "書類選考" },
+  { key: "interview", label: "一次面接以上", match: (a) => ["一次面接", "二次面接", "最終面接"].includes(a.status) },
+  { key: "offer",     label: "内定以上",     match: (a) => OFFER_SET.includes(a.status) },
+];
 
 /* ---------- 流入経路（リード獲得チャネル。db.sources で動的管理） ----------
    流入経路は4つ以上に増える前提で、設定画面（TimeRex設定）から
@@ -113,6 +125,7 @@ let currentView = "dashboard";
 let filters = { q: "", stage: "", source: "", advisor: "" };
 let calDate = today();      // 面談カレンダーの基準日 YYYY-MM-DD
 let calView = "month";      // "month" | "week"
+let yomiFilter = "all";     // 読み票テーブルの絞り込み
 
 /* =========================================================
    ルーティング / レンダリング
@@ -908,26 +921,46 @@ function allApplications() {
   return out;
 }
 function renderYomi() {
-  const active = allApplications().filter((r) => r.a.status !== "見送り").sort((x, y) => appYomi(y.a) - appYomi(x.a));
+  const order = (st) => STAGES.findIndex((s) => s.key === st);
+  const activeCands = db.candidates.filter((c) => c.stage !== "closed" && c.stage !== "referral");
+  // 選考ファネル（候補者単位）
+  const seatedCnt = activeCands.filter((c) => order(c.stage) >= order("seated")).length;
+  const onSelCnt = db.candidates.filter((c) => hasAppIn(c, SELECTION_SET)).length;
+  const offerCnt = db.candidates.filter((c) => hasAppIn(c, OFFER_SET)).length;
+  const joinedCnt = db.candidates.filter((c) => hasAppIn(c, ["入社"])).length;
+  const funnel = [
+    { label: "着座", value: seatedCnt, foot: "着座以降の稼働中" },
+    { label: "選考中（一次面接以上）", value: onSelCnt, foot: "どこかしら選考に乗っている" },
+    { label: "内定以上", value: offerCnt, foot: "内定・承諾・入社" },
+    { label: "入社（決定）", value: joinedCnt, foot: "入社確定" },
+  ];
+
+  // 売上（見送りを除く全進行中）
+  const active = allApplications().filter((r) => r.a.status !== "見送り");
   const totalFee = active.reduce((s, r) => s + (Number(r.a.fee) || 0), 0);
   const totalYomi = active.reduce((s, r) => s + appYomi(r.a), 0);
   const confirmed = active.filter((r) => r.a.status === "入社").reduce((s, r) => s + (Number(r.a.fee) || 0), 0);
-  const byConf = CONFIDENCE.map((cf) => {
-    const list = active.filter((r) => r.a.status !== "入社" && r.a.conf === cf.key);
-    return { label: cf.label, yomi: list.reduce((s, r) => s + appYomi(r.a), 0), count: list.length };
-  });
-  const kpis = [
+  const byConf = CONFIDENCE.map((cf) => active.filter((r) => r.a.status !== "入社" && r.a.conf === cf.key).reduce((s, r) => s + appYomi(r.a), 0));
+  const sales = [
     { label: "確定売上（入社）", value: fmtYen(confirmed), foot: `${active.filter((r) => r.a.status === "入社").length} 件` },
     { label: "読み額 合計", value: fmtYen(totalYomi), foot: "確定＋進行中の読み" },
     { label: "想定売上 合計", value: fmtYen(totalFee), foot: `進行中 ${active.length} 件` },
-    { label: "確度別 読み", value: "", foot: byConf.map((b) => `${b.label.slice(0, 1)} ${fmtYen(b.yomi)}`).join("　") },
+    { label: "確度別 読み", value: "", foot: CONFIDENCE.map((cf, i) => `${cf.key} ${fmtYen(byConf[i])}`).join("　") },
   ];
+
+  // テーブル：絞り込み適用
+  const flt = YOMI_FILTERS.find((f) => f.key === yomiFilter) || YOMI_FILTERS[0];
+  const rows = allApplications().filter((r) => flt.match(r.a)).sort((x, y) => appYomi(y.a) - appYomi(x.a));
+  const fFee = rows.reduce((s, r) => s + (Number(r.a.fee) || 0), 0);
+  const fYomi = rows.reduce((s, r) => s + appYomi(r.a), 0);
+  const card = (k) => `<div class="card kpi"><div class="kpi-label">${k.label}</div><div class="kpi-value" style="font-size:24px">${k.value}</div><div class="kpi-foot">${k.foot}</div></div>`;
+  const chip = (f) => `<button class="btn btn-sm ${yomiFilter === f.key ? "btn-primary" : "btn-outline"}" data-yomif="${f.key}">${f.label} ${allApplications().filter((r) => f.match(r.a)).length}</button>`;
+
   return `
-    <div class="kpi-grid">
-      ${kpis.map((k) => `<div class="card kpi"><div class="kpi-label">${k.label}</div><div class="kpi-value" style="font-size:24px">${k.value}</div><div class="kpi-foot">${k.foot}</div></div>`).join("")}
-    </div>
+    <div class="kpi-grid">${funnel.map(card).join("")}</div>
+    <div class="kpi-grid" style="margin-top:var(--sp-4)">${sales.map(card).join("")}</div>
     <div class="filter-row">
-      <span class="muted">進行中の選考 <strong>${active.length}</strong> 件（見送りは除く）</span>
+      <div class="seg">${YOMI_FILTERS.map(chip).join("")}</div>
       <button class="btn btn-outline btn-sm" id="yomiCsv" style="margin-left:auto">⬇ 読み票CSV</button>
     </div>
     <div class="card table-wrap">
@@ -936,26 +969,27 @@ function renderYomi() {
           <th>候補者</th><th>企業</th><th>選考ステータス</th><th>担当者</th><th style="text-align:right">想定売上</th><th>確度</th><th style="text-align:right">読み額</th>
         </tr></thead>
         <tbody>
-          ${active.length ? active.map(({ c, a }) => `
+          ${rows.length ? rows.map(({ c, a }) => `
             <tr data-id="${c.id}">
               <td>${esc(c.name)}</td>
               <td>${esc(a.company || "—")}</td>
-              <td><span class="badge" data-stage="${a.status === "入社" ? "join" : a.status === "内定" || a.status === "内定承諾" ? "offer" : "screen"}"><span class="dot"></span>${esc(a.status)}</span></td>
+              <td><span class="badge" data-stage="${a.status === "入社" ? "join" : OFFER_SET.includes(a.status) ? "offer" : a.status === "見送り" ? "closed" : "screen"}"><span class="dot"></span>${esc(a.status)}</span></td>
               <td>${esc(advisorName(c.advisorId))}</td>
               <td style="text-align:right">${fmtYen(a.fee)}</td>
               <td>${a.status === "入社" ? "確定" : esc((CONFIDENCE.find((x) => x.key === a.conf) || {}).label || a.conf || "")}</td>
               <td style="text-align:right"><strong>${fmtYen(appYomi(a))}</strong></td>
-            </tr>`).join("") : `<tr><td colspan="7"><div class="empty">選考企業が登録されていません。求職者の詳細→「選考企業」から追加してください</div></td></tr>`}
+            </tr>`).join("") : `<tr><td colspan="7"><div class="empty">該当する選考企業がありません</div></td></tr>`}
         </tbody>
-        ${active.length ? `<tfoot><tr class="yomi-total">
-          <td colspan="4">合計</td>
-          <td style="text-align:right">${fmtYen(totalFee)}</td><td></td>
-          <td style="text-align:right"><strong class="pos">${fmtYen(totalYomi)}</strong></td>
+        ${rows.length ? `<tfoot><tr class="yomi-total">
+          <td colspan="4">合計（${rows.length}件）</td>
+          <td style="text-align:right">${fmtYen(fFee)}</td><td></td>
+          <td style="text-align:right"><strong class="pos">${fmtYen(fYomi)}</strong></td>
         </tr></tfoot>` : ""}
       </table>
     </div>`;
 }
 function bindYomi() {
+  $$("[data-yomif]").forEach((b) => b.addEventListener("click", () => { yomiFilter = b.dataset.yomif; render(); }));
   $("#yomiCsv")?.addEventListener("click", exportYomiCSV);
   $$(".tbl tbody tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDetail(tr.dataset.id)));
 }
@@ -1233,7 +1267,7 @@ function importReferralRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v14"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v15"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -1257,7 +1291,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v14)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v15)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
