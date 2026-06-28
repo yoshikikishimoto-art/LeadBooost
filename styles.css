@@ -34,14 +34,21 @@
   --warning: #d98309;
   --warning-soft: #fcf3e5;
 
-  /* ステージ色（紹介→承諾→入社の各段階を意味で区別） */
-  --stage-entry: #64748b;     /* 登録 */
-  --stage-intro: #2563eb;     /* 紹介 */
-  --stage-screen: #7c3aed;    /* 選考 */
-  --stage-offer: #d98309;     /* 内定 */
-  --stage-accept: #0d9488;    /* 承諾 */
-  --stage-join: #15a06a;      /* 入社 */
-  --stage-closed: #94a3b8;    /* 終了 */
+  /* ステージ色（予約→着座→…→入社→返金規定クリアの各段階を意味で区別） */
+  --stage-booked:   #64748b;  /* 予約 */
+  --stage-seated:   #0ea5e9;  /* 着座 */
+  --stage-meeting:  #2563eb;  /* 初回面談 */
+  --stage-proposal: #6366f1;  /* 企業提案 */
+  --stage-screen:   #7c3aed;  /* 選考 */
+  --stage-offer:    #d98309;  /* 内定 */
+  --stage-accept:   #0d9488;  /* 内定承諾 */
+  --stage-join:     #15a06a;  /* 入社 */
+  --stage-refund:   #047857;  /* 返金規定クリア */
+  --stage-closed:   #94a3b8;  /* 終了 */
+
+  /* 流入経路の色 */
+  --source-timerex:  #2563eb; /* TimeRex予約 */
+  --source-referral: #12a150; /* リファラル（LINE） */
 
   /* 角丸 */
   --r-sm: 6px;
@@ -191,13 +198,25 @@ button { font-family: inherit; cursor: pointer; }
   font-size: 12px; font-weight: 500; white-space: nowrap;
 }
 .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.badge[data-stage="entry"]  { color: var(--stage-entry);  background: color-mix(in srgb, var(--stage-entry) 12%, #fff); }
-.badge[data-stage="intro"]  { color: var(--stage-intro);  background: color-mix(in srgb, var(--stage-intro) 12%, #fff); }
-.badge[data-stage="screen"] { color: var(--stage-screen); background: color-mix(in srgb, var(--stage-screen) 12%, #fff); }
-.badge[data-stage="offer"]  { color: var(--stage-offer);  background: color-mix(in srgb, var(--stage-offer) 14%, #fff); }
-.badge[data-stage="accept"] { color: var(--stage-accept); background: color-mix(in srgb, var(--stage-accept) 14%, #fff); }
-.badge[data-stage="join"]   { color: var(--stage-join);   background: color-mix(in srgb, var(--stage-join) 14%, #fff); }
-.badge[data-stage="closed"] { color: var(--stage-closed); background: color-mix(in srgb, var(--stage-closed) 16%, #fff); }
+.badge[data-stage="booked"]   { color: var(--stage-booked);   background: color-mix(in srgb, var(--stage-booked) 12%, #fff); }
+.badge[data-stage="seated"]   { color: var(--stage-seated);   background: color-mix(in srgb, var(--stage-seated) 12%, #fff); }
+.badge[data-stage="meeting"]  { color: var(--stage-meeting);  background: color-mix(in srgb, var(--stage-meeting) 12%, #fff); }
+.badge[data-stage="proposal"] { color: var(--stage-proposal); background: color-mix(in srgb, var(--stage-proposal) 12%, #fff); }
+.badge[data-stage="screen"]   { color: var(--stage-screen);   background: color-mix(in srgb, var(--stage-screen) 12%, #fff); }
+.badge[data-stage="offer"]    { color: var(--stage-offer);    background: color-mix(in srgb, var(--stage-offer) 14%, #fff); }
+.badge[data-stage="accept"]   { color: var(--stage-accept);   background: color-mix(in srgb, var(--stage-accept) 14%, #fff); }
+.badge[data-stage="join"]     { color: var(--stage-join);     background: color-mix(in srgb, var(--stage-join) 14%, #fff); }
+.badge[data-stage="refund"]   { color: var(--stage-refund);   background: color-mix(in srgb, var(--stage-refund) 14%, #fff); }
+.badge[data-stage="closed"]   { color: var(--stage-closed);   background: color-mix(in srgb, var(--stage-closed) 16%, #fff); }
+
+/* 流入経路バッジ */
+.src-badge {
+  display: inline-flex; align-items: center;
+  height: 22px; padding: 0 9px; border-radius: var(--r-full);
+  font-size: 12px; font-weight: 500; white-space: nowrap;
+}
+.src-badge[data-source="timerex"]  { color: var(--source-timerex);  background: color-mix(in srgb, var(--source-timerex) 12%, #fff); }
+.src-badge[data-source="referral"] { color: var(--source-referral); background: color-mix(in srgb, var(--source-referral) 14%, #fff); }
 
 /* ============================ ダッシュボード ============================ */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); margin-bottom: var(--sp-6); }
@@ -213,11 +232,12 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ファネル */
 .funnel { display: flex; flex-direction: column; gap: 10px; }
-.funnel-row { display: grid; grid-template-columns: 72px 1fr 40px; align-items: center; gap: var(--sp-3); }
-.funnel-name { font-size: 13px; color: var(--text-soft); }
+.funnel-row { display: grid; grid-template-columns: 104px 1fr 36px; align-items: center; gap: var(--sp-3); }
+.funnel-name { font-size: 12px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .funnel-bar { height: 26px; border-radius: var(--r-sm); background: var(--bg-subtle); overflow: hidden; }
 .funnel-fill { height: 100%; border-radius: var(--r-sm); min-width: 2px; transition: width .5s cubic-bezier(.2,.7,.2,1); }
 .funnel-count { font-size: 13px; font-weight: 700; text-align: right; }
+.src-note { font-size: 12px; color: var(--text-mute); margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--line-soft); }
 
 /* アクティビティ */
 .activity-list { display: flex; flex-direction: column; }

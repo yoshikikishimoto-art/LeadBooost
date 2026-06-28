@@ -5,18 +5,29 @@
 
 /* ---------- ステージ定義（パイプラインの単一ソース） ---------- */
 const STAGES = [
-  { key: "entry",  label: "登録",   color: "var(--stage-entry)"  },
-  { key: "intro",  label: "紹介",   color: "var(--stage-intro)"  },
-  { key: "screen", label: "選考",   color: "var(--stage-screen)" },
-  { key: "offer",  label: "内定",   color: "var(--stage-offer)"  },
-  { key: "accept", label: "承諾",   color: "var(--stage-accept)" },
-  { key: "join",   label: "入社",   color: "var(--stage-join)"   },
+  { key: "booked",   label: "予約",           color: "var(--stage-booked)"   },
+  { key: "seated",   label: "着座",           color: "var(--stage-seated)"   },
+  { key: "meeting",  label: "初回面談",        color: "var(--stage-meeting)"  },
+  { key: "proposal", label: "企業提案",        color: "var(--stage-proposal)" },
+  { key: "screen",   label: "選考",           color: "var(--stage-screen)"   },
+  { key: "offer",    label: "内定",           color: "var(--stage-offer)"    },
+  { key: "accept",   label: "内定承諾",        color: "var(--stage-accept)"   },
+  { key: "join",     label: "入社",           color: "var(--stage-join)"     },
+  { key: "refund",   label: "返金規定クリア",   color: "var(--stage-refund)"   },
 ];
 const STAGE_MAP = Object.fromEntries(STAGES.map((s) => [s.key, s]));
 const CLOSED = { key: "closed", label: "終了（辞退・見送り）", color: "var(--stage-closed)" };
 
+/* ---------- 流入経路（リード獲得チャネルの単一ソース） ---------- */
+const SOURCES = [
+  { key: "timerex",  label: "TimeRex予約",        color: "var(--source-timerex)"  },
+  { key: "referral", label: "リファラル（LINE）",  color: "var(--source-referral)" },
+];
+const SOURCE_MAP = Object.fromEntries(SOURCES.map((s) => [s.key, s]));
+function sourceOf(c) { return SOURCE_MAP[c.source] || null; }
+
 /* ---------- ストレージ ---------- */
-const DB_KEY = "talentflow.db.v1";
+const DB_KEY = "talentflow.db.v2";
 
 function loadDB() {
   try {
@@ -56,14 +67,14 @@ function logActivity(c, text, type = "note") {
 
 /* ---------- 状態 ---------- */
 let currentView = "dashboard";
-let filters = { q: "", stage: "", advisor: "" };
+let filters = { q: "", stage: "", source: "", advisor: "" };
 
 /* =========================================================
    ルーティング / レンダリング
    ========================================================= */
 const VIEW_META = {
-  dashboard:  { title: "ダッシュボード", sub: "求職者の進捗を一目で確認" },
-  pipeline:   { title: "パイプライン",  sub: "ドラッグで 紹介→承諾→入社 のステージを移動" },
+  dashboard:  { title: "ダッシュボード", sub: "流入から入社・返金規定クリアまでの進捗を一目で確認" },
+  pipeline:   { title: "パイプライン",  sub: "ドラッグで 予約→着座→…→入社 のステージを移動" },
   candidates: { title: "求職者一覧",    sub: "登録された求職者を検索・絞り込み" },
   advisors:   { title: "アドバイザー",  sub: "キャリアアドバイザーと担当状況" },
 };
@@ -84,19 +95,31 @@ function renderDashboard() {
   const cs = db.candidates;
   const active = cs.filter((c) => c.stage !== "closed");
   const counts = Object.fromEntries(STAGES.map((s) => [s.key, cs.filter((c) => c.stage === s.key).length]));
-  const joinedThisMonth = cs.filter((c) => c.stage === "join" && (c.joinedAt || "").slice(0, 7) === today().slice(0, 7)).length;
   const max = Math.max(1, ...STAGES.map((s) => counts[s.key]));
 
-  const introduced = cs.filter((c) => ["intro", "screen", "offer", "accept", "join"].includes(c.stage)).length;
-  const accepted = counts.accept + counts.join;
-  const acceptRate = introduced ? Math.round((accepted / introduced) * 100) : 0;
+  const order = (st) => STAGES.findIndex((s) => s.key === st);
+  const reached = (key) => active.filter((c) => order(c.stage) >= order(key)).length;
+  const joinedThisMonth = cs.filter((c) => ["join", "refund"].includes(c.stage) && (c.joinedAt || "").slice(0, 7) === today().slice(0, 7)).length;
+  const joinedTotal = counts.join + counts.refund;
+  const seatRate = active.length ? Math.round((reached("seated") / active.length) * 100) : 0;
+  const proposed = reached("proposal");
+  const acceptRate = proposed ? Math.round((reached("accept") / proposed) * 100) : 0;
 
   const kpis = [
-    { label: "登録求職者（稼働中）", value: active.length, foot: `全 ${cs.length} 名` },
-    { label: "紹介中", value: counts.intro + counts.screen, foot: "選考進行中を含む" },
-    { label: "承諾", value: counts.accept, foot: `承諾率 <strong class="pos">${acceptRate}%</strong>` },
-    { label: "今月の入社", value: joinedThisMonth, foot: `入社累計 ${counts.join} 名` },
+    { label: "稼働中の求職者", value: active.length, foot: `全 ${cs.length} 名（終了含む）` },
+    { label: "着座率", value: `${seatRate}%`, foot: `着座以降 <strong class="pos">${reached("seated")}</strong> 名` },
+    { label: "内定承諾", value: counts.accept, foot: `承諾率 <strong class="pos">${acceptRate}%</strong>（企業提案比）` },
+    { label: "今月の入社", value: joinedThisMonth, foot: `入社累計 ${joinedTotal} 名` },
   ];
+
+  // 流入経路の内訳
+  const srcRows = SOURCES.map((s) => {
+    const list = cs.filter((c) => c.source === s.key);
+    const joined = list.filter((c) => ["join", "refund"].includes(c.stage)).length;
+    return { ...s, total: list.length, joined };
+  });
+  const srcUnknown = cs.filter((c) => !c.source).length;
+  const srcMax = Math.max(1, ...srcRows.map((r) => r.total), srcUnknown);
 
   const recent = cs
     .flatMap((c) => (c.activities || []).map((a) => ({ ...a, cand: c })))
@@ -125,17 +148,35 @@ function renderDashboard() {
         </div>
       </div>
       <div class="card panel">
-        <div class="panel-title">最近の動き</div>
-        <div class="activity-list">
-          ${recent.length ? recent.map((a) => `
-            <div class="activity">
-              <div class="activity-ico">${activityIcon(a.type)}</div>
-              <div>
-                <div class="activity-body"><strong>${esc(a.cand.name)}</strong> ${esc(a.text)}</div>
-                <div class="activity-meta">${fmtDate(a.date)}・${esc(advisorName(a.cand.advisorId))}</div>
-              </div>
-            </div>`).join("") : `<div class="empty">まだ活動がありません</div>`}
+        <div class="panel-title">流入経路の内訳</div>
+        <div class="funnel">
+          ${srcRows.map((r) => `
+            <div class="funnel-row">
+              <div class="funnel-name">${r.label}</div>
+              <div class="funnel-bar"><div class="funnel-fill" style="width:${(r.total / srcMax) * 100}%;background:${r.color}"></div></div>
+              <div class="funnel-count">${r.total}</div>
+            </div>`).join("")}
+          ${srcUnknown ? `
+            <div class="funnel-row">
+              <div class="funnel-name muted">未設定</div>
+              <div class="funnel-bar"><div class="funnel-fill" style="width:${(srcUnknown / srcMax) * 100}%;background:var(--stage-closed)"></div></div>
+              <div class="funnel-count">${srcUnknown}</div>
+            </div>` : ""}
         </div>
+        <div class="src-note">入社：${srcRows.map((r) => `${r.label} ${r.joined}名`).join(" ／ ")}</div>
+      </div>
+    </div>
+    <div class="card panel" style="margin-top:var(--sp-4)">
+      <div class="panel-title">最近の動き</div>
+      <div class="activity-list">
+        ${recent.length ? recent.map((a) => `
+          <div class="activity">
+            <div class="activity-ico">${activityIcon(a.type)}</div>
+            <div>
+              <div class="activity-body"><strong>${esc(a.cand.name)}</strong> ${esc(a.text)}</div>
+              <div class="activity-meta">${fmtDate(a.date)}・${esc(advisorName(a.cand.advisorId))}</div>
+            </div>
+          </div>`).join("") : `<div class="empty">まだ活動がありません</div>`}
       </div>
     </div>`;
 }
@@ -219,6 +260,12 @@ function renderCandidates() {
         </select>
       </div>
       <div class="select-wrap">
+        <select class="select" id="fsource">
+          ${opt("", "すべての流入経路", !filters.source)}
+          ${SOURCES.map((s) => opt(s.key, s.label, filters.source === s.key)).join("")}
+        </select>
+      </div>
+      <div class="select-wrap">
         <select class="select" id="fadvisor">
           ${opt("", "すべての担当", !filters.advisor)}
           ${db.advisors.map((a) => opt(a.id, a.name, filters.advisor === a.id)).join("")}
@@ -229,16 +276,17 @@ function renderCandidates() {
     <div class="card table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>氏名</th><th>ステージ</th><th>紹介先 / 希望職種</th><th>担当</th><th>更新</th>
+          <th>氏名</th><th>ステージ</th><th>流入</th><th>紹介先 / 希望職種</th><th>担当</th><th>更新</th>
         </tr></thead>
         <tbody>
-          ${list.length ? list.map(rowCandidate).join("") : `<tr><td colspan="5"><div class="empty">該当する求職者がいません</div></td></tr>`}
+          ${list.length ? list.map(rowCandidate).join("") : `<tr><td colspan="6"><div class="empty">該当する求職者がいません</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
 }
 function rowCandidate(c) {
   const s = stageOf(c);
+  const src = sourceOf(c);
   return `
     <tr data-id="${c.id}">
       <td><div class="cell-name">
@@ -246,6 +294,7 @@ function rowCandidate(c) {
         <div><div class="name">${esc(c.name)}</div><div class="sub">${esc(c.kana || "")}</div></div>
       </div></td>
       <td><span class="badge" data-stage="${s.key}"><span class="dot"></span>${s.label}</span></td>
+      <td>${src ? `<span class="src-badge" data-source="${src.key}">${src.label}</span>` : `<span class="muted">—</span>`}</td>
       <td>${esc(c.company || "—")}<div class="sub muted" style="font-size:12px">${esc(c.desiredJob || "")}</div></td>
       <td>${esc(advisorName(c.advisorId))}</td>
       <td class="muted">${fmtDate(c.updatedAt)}</td>
@@ -255,6 +304,7 @@ function filteredCandidates() {
   const q = filters.q.trim().toLowerCase();
   return db.candidates.filter((c) => {
     if (filters.stage && c.stage !== filters.stage) return false;
+    if (filters.source && c.source !== filters.source) return false;
     if (filters.advisor && c.advisorId !== filters.advisor) return false;
     if (q) {
       const hay = [c.name, c.kana, c.company, c.desiredJob, (c.skills || []).join(" ")].join(" ").toLowerCase();
@@ -266,6 +316,7 @@ function filteredCandidates() {
 function bindCandidates() {
   $("#fq").addEventListener("input", (e) => { filters.q = e.target.value; refreshTableOnly(); });
   $("#fstage").addEventListener("change", (e) => { filters.stage = e.target.value; render(); });
+  $("#fsource").addEventListener("change", (e) => { filters.source = e.target.value; render(); });
   $("#fadvisor").addEventListener("change", (e) => { filters.advisor = e.target.value; render(); });
   $$(".tbl tbody tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDetail(tr.dataset.id)));
 }
@@ -273,7 +324,7 @@ function refreshTableOnly() {
   const list = filteredCandidates();
   const tbody = $(".tbl tbody");
   if (!tbody) return render();
-  tbody.innerHTML = list.length ? list.map(rowCandidate).join("") : `<tr><td colspan="5"><div class="empty">該当する求職者がいません</div></td></tr>`;
+  tbody.innerHTML = list.length ? list.map(rowCandidate).join("") : `<tr><td colspan="6"><div class="empty">該当する求職者がいません</div></td></tr>`;
   $(".filter-row .muted").textContent = `${list.length} 名`;
   $$(".tbl tbody tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDetail(tr.dataset.id)));
 }
@@ -310,7 +361,8 @@ function openCandidateForm(c) {
   const isNew = !c;
   c = c || {};
   const advOpts = db.advisors.map((a) => `<option value="${a.id}" ${c.advisorId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
-  const stageOpts = [...STAGES, CLOSED].map((s) => `<option value="${s.key}" ${(c.stage || "entry") === s.key ? "selected" : ""}>${s.label}</option>`).join("");
+  const stageOpts = [...STAGES, CLOSED].map((s) => `<option value="${s.key}" ${(c.stage || "booked") === s.key ? "selected" : ""}>${s.label}</option>`).join("");
+  const sourceOpts = SOURCES.map((s) => `<option value="${s.key}" ${c.source === s.key ? "selected" : ""}>${s.label}</option>`).join("");
   openModal(`
     <div class="modal-head">
       <div><div class="modal-title">${isNew ? "求職者を追加" : "求職者を編集"}</div></div>
@@ -331,15 +383,18 @@ function openCandidateForm(c) {
         <div class="field"><label class="field-label">希望年収</label><input class="input" id="f_salary" value="${esc(c.desiredSalary || "")}" placeholder="例：600万円" /></div>
         <div class="field"><label class="field-label">スキル（カンマ区切り）</label><input class="input" id="f_skills" value="${esc((c.skills || []).join(", "))}" placeholder="例：React, TypeScript" /></div>
       </div>
-      <div class="section-label">紹介・進捗</div>
+      <div class="section-label">流入・進捗</div>
       <div class="form-grid">
+        <div class="field"><label class="field-label">流入経路</label>
+          <div class="select-wrap"><select class="select" id="f_source"><option value="">未設定</option>${sourceOpts}</select></div>
+        </div>
+        <div class="field"><label class="field-label">ステージ</label>
+          <div class="select-wrap"><select class="select" id="f_stage">${stageOpts}</select></div>
+        </div>
         <div class="field"><label class="field-label">紹介先企業</label><input class="input" id="f_company" value="${esc(c.company || "")}" /></div>
         <div class="field"><label class="field-label">ポジション</label><input class="input" id="f_position" value="${esc(c.position || "")}" /></div>
         <div class="field"><label class="field-label">担当アドバイザー</label>
           <div class="select-wrap"><select class="select" id="f_advisor"><option value="">未割当</option>${advOpts}</select></div>
-        </div>
-        <div class="field"><label class="field-label">ステージ</label>
-          <div class="select-wrap"><select class="select" id="f_stage">${stageOpts}</select></div>
         </div>
       </div>
     </div>
@@ -368,6 +423,7 @@ function saveCandidate(id) {
     company: $("#f_company").value.trim(),
     position: $("#f_position").value.trim(),
     advisorId: $("#f_advisor").value,
+    source: $("#f_source").value,
     stage: $("#f_stage").value,
   };
   if (id) {
@@ -408,7 +464,7 @@ function openDetail(id) {
     return `<div class="step ${cls}"><div class="step-bar"></div><div class="step-label">${st.label}</div></div>`;
   }).join("");
   const row = (label, val) => val ? `<div class="field"><label class="field-label">${label}</label><div>${esc(val)}</div></div>` : "";
-  const skills = (c.skills || []).length ? `<div class="field full"><label class="field-label">スキル</label><div>${c.skills.map((s) => `<span class="badge" data-stage="intro" style="margin:2px 4px 2px 0">${esc(s)}</span>`).join("")}</div></div>` : "";
+  const skills = (c.skills || []).length ? `<div class="field full"><label class="field-label">スキル</label><div>${c.skills.map((s) => `<span class="badge" data-stage="meeting" style="margin:2px 4px 2px 0">${esc(s)}</span>`).join("")}</div></div>` : "";
 
   openModal(`
     <div class="modal-head">
@@ -431,6 +487,7 @@ function openDetail(id) {
 
       <div class="section-label">求職者情報</div>
       <div class="form-grid">
+        ${row("流入経路", sourceOf(c)?.label)}
         ${row("メール", c.email)}
         ${row("電話", c.phone)}
         ${row("現職 / 経歴", c.currentJob)}
@@ -459,7 +516,7 @@ function openDetail(id) {
 }
 
 function nextStageButtons(c) {
-  if (c.stage === "closed") return `<button class="btn btn-outline btn-sm" onclick="setStage('${c.id}','entry')">再開する</button>`;
+  if (c.stage === "closed") return `<button class="btn btn-outline btn-sm" onclick="setStage('${c.id}','booked')">再開する</button>`;
   const idx = STAGES.findIndex((x) => x.key === c.stage);
   const btns = [];
   if (idx < STAGES.length - 1) {
@@ -565,26 +622,30 @@ function seedData() {
     { id: "adv2", name: "岸本 義樹", email: "y.kishimoto@example.com" },
     { id: "adv3", name: "佐藤 美咲", email: "m.sato@example.com" },
   ];
-  const mk = (o) => ({ email: "", phone: "", skills: [], activities: [], createdAt: "2026-06-01", ...o });
+  const mk = (o) => ({ email: "", phone: "", skills: [], source: "", activities: [], createdAt: "2026-06-01", ...o });
   const C = [
-    mk({ id: "c1", name: "田中 健一", kana: "タナカ ケンイチ", advisorId: "adv1", stage: "join", company: "株式会社テックスター", position: "バックエンドエンジニア", currentJob: "SIerでJava開発5年", desiredJob: "Webサービス開発", desiredSalary: "650万円", skills: ["Java", "Spring", "AWS"], joinedAt: "2026-06-15", updatedAt: "2026-06-15",
-      activities: [{ id: "a1", date: "2026-06-15", type: "stage", text: "ステージを「承諾」→「入社」に変更" }, { id: "a2", date: "2026-06-02", type: "note", text: "入社日確定。6/15付け。受け入れ準備OK" }] }),
-    mk({ id: "c2", name: "山本 さくら", kana: "ヤマモト サクラ", advisorId: "adv2", stage: "accept", company: "グロースラボ株式会社", position: "フロントエンドエンジニア", currentJob: "受託開発3年", desiredJob: "自社プロダクト", desiredSalary: "550万円", skills: ["React", "TypeScript", "Next.js"], updatedAt: "2026-06-20",
-      activities: [{ id: "a3", date: "2026-06-20", type: "stage", text: "ステージを「内定」→「承諾」に変更" }, { id: "a4", date: "2026-06-18", type: "note", text: "オファー面談実施。条件に納得いただけた" }] }),
-    mk({ id: "c3", name: "鈴木 大輔", kana: "スズキ ダイスケ", advisorId: "adv1", stage: "offer", company: "株式会社ネクストワン", position: "PM候補", currentJob: "事業会社で企画", desiredJob: "プロダクトマネージャー", desiredSalary: "700万円", skills: ["要件定義", "スクラム"], updatedAt: "2026-06-22",
-      activities: [{ id: "a5", date: "2026-06-22", type: "stage", text: "ステージを「選考」→「内定」に変更" }] }),
-    mk({ id: "c4", name: "高橋 葵", kana: "タカハシ アオイ", advisorId: "adv3", stage: "screen", company: "クラウドベース株式会社", position: "インフラエンジニア", currentJob: "オンプレ運用", desiredJob: "クラウドインフラ", desiredSalary: "600万円", skills: ["AWS", "Terraform", "Kubernetes"], updatedAt: "2026-06-24",
-      activities: [{ id: "a6", date: "2026-06-24", type: "note", text: "一次面接通過。来週二次面接" }] }),
-    mk({ id: "c5", name: "伊藤 直樹", kana: "イトウ ナオキ", advisorId: "adv2", stage: "intro", company: "株式会社データワークス", position: "データエンジニア", currentJob: "アナリスト", desiredJob: "データ基盤構築", desiredSalary: "580万円", skills: ["Python", "SQL", "BigQuery"], updatedAt: "2026-06-25",
-      activities: [{ id: "a7", date: "2026-06-25", type: "stage", text: "ステージを「登録」→「紹介」に変更" }] }),
-    mk({ id: "c6", name: "渡辺 美穂", kana: "ワタナベ ミホ", advisorId: "adv3", stage: "intro", company: "株式会社UXデザイン", position: "UIデザイナー", currentJob: "制作会社デザイナー", desiredJob: "プロダクトデザイン", desiredSalary: "520万円", skills: ["Figma", "UIデザイン"], updatedAt: "2026-06-26",
-      activities: [{ id: "a8", date: "2026-06-26", type: "note", text: "企業へ推薦書を送付" }] }),
-    mk({ id: "c7", name: "中村 翔", kana: "ナカムラ ショウ", advisorId: "adv1", stage: "entry", currentJob: "新卒3年目 営業", desiredJob: "エンジニア転職", desiredSalary: "450万円", skills: ["独学でProgate完了"], updatedAt: "2026-06-27",
-      activities: [{ id: "a9", date: "2026-06-27", type: "create", text: "求職者を登録" }] }),
-    mk({ id: "c8", name: "小林 由美", kana: "コバヤシ ユミ", advisorId: "adv2", stage: "entry", currentJob: "経理5年", desiredJob: "コーポレートIT", desiredSalary: "500万円", skills: ["Excel", "業務改善"], updatedAt: "2026-06-28",
-      activities: [{ id: "a10", date: "2026-06-28", type: "create", text: "求職者を登録" }] }),
-    mk({ id: "c9", name: "加藤 隆", kana: "カトウ タカシ", advisorId: "adv3", stage: "closed", company: "株式会社オールド", position: "営業", currentJob: "営業10年", desiredJob: "営業マネージャー", desiredSalary: "650万円", skills: ["法人営業"], updatedAt: "2026-06-10",
-      activities: [{ id: "a11", date: "2026-06-10", type: "stage", text: "ステージを「選考」→「終了（辞退・見送り）」に変更" }, { id: "a12", date: "2026-06-10", type: "note", text: "他社で内定承諾のため辞退" }] }),
+    mk({ id: "c1", name: "田中 健一", kana: "タナカ ケンイチ", advisorId: "adv1", source: "timerex", stage: "refund", company: "株式会社テックスター", position: "バックエンドエンジニア", currentJob: "SIerでJava開発5年", desiredJob: "Webサービス開発", desiredSalary: "650万円", skills: ["Java", "Spring", "AWS"], joinedAt: "2026-03-01", updatedAt: "2026-06-10",
+      activities: [{ id: "a1", date: "2026-06-10", type: "stage", text: "ステージを「入社」→「返金規定クリア」に変更" }, { id: "a2", date: "2026-03-01", type: "note", text: "入社。3/1付け。受け入れ準備OK" }] }),
+    mk({ id: "c2", name: "山本 さくら", kana: "ヤマモト サクラ", advisorId: "adv2", source: "referral", stage: "join", company: "グロースラボ株式会社", position: "フロントエンドエンジニア", currentJob: "受託開発3年", desiredJob: "自社プロダクト", desiredSalary: "550万円", skills: ["React", "TypeScript", "Next.js"], joinedAt: "2026-06-16", updatedAt: "2026-06-16",
+      activities: [{ id: "a3", date: "2026-06-16", type: "stage", text: "ステージを「内定承諾」→「入社」に変更" }, { id: "a4", date: "2026-06-02", type: "note", text: "LINEグループで日程調整 → 入社日確定" }] }),
+    mk({ id: "c3", name: "鈴木 大輔", kana: "スズキ ダイスケ", advisorId: "adv1", source: "timerex", stage: "accept", company: "株式会社ネクストワン", position: "PM候補", currentJob: "事業会社で企画", desiredJob: "プロダクトマネージャー", desiredSalary: "700万円", skills: ["要件定義", "スクラム"], updatedAt: "2026-06-22",
+      activities: [{ id: "a5", date: "2026-06-22", type: "stage", text: "ステージを「内定」→「内定承諾」に変更" }, { id: "a5b", date: "2026-06-20", type: "note", text: "オファー面談。条件に納得いただけた" }] }),
+    mk({ id: "c4", name: "高橋 葵", kana: "タカハシ アオイ", advisorId: "adv3", source: "referral", stage: "offer", company: "クラウドベース株式会社", position: "インフラエンジニア", currentJob: "オンプレ運用", desiredJob: "クラウドインフラ", desiredSalary: "600万円", skills: ["AWS", "Terraform", "Kubernetes"], updatedAt: "2026-06-24",
+      activities: [{ id: "a6", date: "2026-06-24", type: "stage", text: "ステージを「選考」→「内定」に変更" }] }),
+    mk({ id: "c5", name: "伊藤 直樹", kana: "イトウ ナオキ", advisorId: "adv2", source: "timerex", stage: "screen", company: "株式会社データワークス", position: "データエンジニア", currentJob: "アナリスト", desiredJob: "データ基盤構築", desiredSalary: "580万円", skills: ["Python", "SQL", "BigQuery"], updatedAt: "2026-06-25",
+      activities: [{ id: "a7", date: "2026-06-25", type: "note", text: "一次面接通過。来週二次面接" }] }),
+    mk({ id: "c6", name: "渡辺 美穂", kana: "ワタナベ ミホ", advisorId: "adv3", source: "referral", stage: "proposal", company: "株式会社UXデザイン", position: "UIデザイナー", currentJob: "制作会社デザイナー", desiredJob: "プロダクトデザイン", desiredSalary: "520万円", skills: ["Figma", "UIデザイン"], updatedAt: "2026-06-26",
+      activities: [{ id: "a8", date: "2026-06-26", type: "stage", text: "ステージを「初回面談」→「企業提案」に変更" }, { id: "a8b", date: "2026-06-26", type: "note", text: "2社を提案。来週、推薦書を送付予定" }] }),
+    mk({ id: "c7", name: "中村 翔", kana: "ナカムラ ショウ", advisorId: "adv1", source: "timerex", stage: "meeting", currentJob: "新卒3年目 営業", desiredJob: "エンジニア転職", desiredSalary: "450万円", skills: ["独学でProgate完了"], updatedAt: "2026-06-27",
+      activities: [{ id: "a9", date: "2026-06-27", type: "stage", text: "ステージを「着座」→「初回面談」に変更" }, { id: "a9b", date: "2026-06-27", type: "note", text: "初回面談実施。キャリアの方向性をヒアリング" }] }),
+    mk({ id: "c8", name: "小林 由美", kana: "コバヤシ ユミ", advisorId: "adv2", source: "referral", stage: "seated", currentJob: "経理5年", desiredJob: "コーポレートIT", desiredSalary: "500万円", skills: ["Excel", "業務改善"], updatedAt: "2026-06-28",
+      activities: [{ id: "a10", date: "2026-06-28", type: "stage", text: "ステージを「予約」→「着座」に変更" }, { id: "a10b", date: "2026-06-25", type: "note", text: "リファラル紹介。LINEグループで初回日程を調整" }] }),
+    mk({ id: "c9", name: "加藤 隆", kana: "カトウ タカシ", advisorId: "adv3", source: "timerex", stage: "booked", currentJob: "営業10年", desiredJob: "営業マネージャー", desiredSalary: "650万円", skills: ["法人営業"], updatedAt: "2026-06-28",
+      activities: [{ id: "a11", date: "2026-06-28", type: "create", text: "TimeRexで初回面談を予約" }] }),
+    mk({ id: "c10", name: "森田 彩", kana: "モリタ アヤ", advisorId: "adv1", source: "referral", stage: "booked", currentJob: "販売職", desiredJob: "カスタマーサクセス", desiredSalary: "480万円", skills: ["接客", "顧客折衝"], updatedAt: "2026-06-28",
+      activities: [{ id: "a12", date: "2026-06-28", type: "create", text: "リファラル獲得。LINEグループで日程調整中" }] }),
+    mk({ id: "c11", name: "井上 拓海", kana: "イノウエ タクミ", advisorId: "adv2", source: "timerex", stage: "closed", currentJob: "倉庫管理", desiredJob: "ITサポート", desiredSalary: "400万円", skills: [], updatedAt: "2026-06-19",
+      activities: [{ id: "a13", date: "2026-06-19", type: "stage", text: "ステージを「予約」→「終了（辞退・見送り）」に変更" }, { id: "a14", date: "2026-06-19", type: "note", text: "予約日に来訪なし（No-show）。連絡つかず見送り" }] }),
   ];
   return { advisors: A, candidates: C };
 }
