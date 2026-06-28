@@ -22,11 +22,28 @@ const CLOSED = { key: "closed", label: "終了（辞退・見送り）", color: 
    流入経路は4つ以上に増える前提で、設定画面（TimeRex設定）から
    「経路名 + CSV URL」を追加・編集できる。色はパレットから自動割当。 */
 const SOURCE_PALETTE = ["#2563eb", "#12a150", "#d97706", "#7c3aed", "#0d9488", "#db2777", "#0ea5e9", "#65a30d"];
+
+// 既知の流入経路シート（gviz CSV・link-share済み）。アプリを開けば自動で設定される
+const gvizUrl = (id, gid = 0) => `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${gid}`;
+const KNOWN_SHEETS = [
+  { key: "tezuna", label: "TEZUNA", id: "1p7K2Kt_KDirnknTtmVDFTnxfTXUTX2AjpkyVxkDu7T4" },
+  { key: "hado",   label: "HADO",   id: "1iBUQLTq8A7eiKSmCgq_ZXfWDCWBgrSvEA2iBU8tWFqY" },
+  { key: "rr",     label: "R&R",    id: "10J8E53wNX16vgx5_H6KWjl_VlvqH91wPAnmK5uY03PM" },
+  { key: "kanoa",  label: "KANOA",  id: "1x2cX9SWr7Q91nlf_BnL91Nu22NjTwLk1nAEXsdE-KFE" },
+];
 function defaultSources() {
-  return [
-    { key: "timerex",  label: "TimeRex予約",       color: "#2563eb", csvUrl: "" },
-    { key: "referral", label: "リファラル（LINE）", color: "#12a150", csvUrl: "" },
-  ];
+  return KNOWN_SHEETS.map((k, i) => ({ key: k.key, label: k.label, color: SOURCE_PALETTE[i % SOURCE_PALETTE.length], csvUrl: gvizUrl(k.id) }));
+}
+// 既存の db.sources に既知シートを補完（名前一致なら正しいURLに矯正・無ければ追加）
+function ensureKnownSheets() {
+  db.sources = db.sources || [];
+  let changed = false;
+  defaultSources().forEach((ds) => {
+    const ex = db.sources.find((x) => x.label === ds.label);
+    if (!ex) { db.sources.push(ds); changed = true; }
+    else if (ex.csvUrl !== ds.csvUrl) { ex.csvUrl = ds.csvUrl; changed = true; } // typo等を正しいURLに矯正
+  });
+  if (changed) saveDB();
 }
 function sources() { return (db.sources && db.sources.length) ? db.sources : (db.sources = defaultSources()); }
 function sourceOf(c) { return sources().find((s) => s.key === c.source) || null; }
@@ -46,6 +63,7 @@ function saveDB() { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
 let db = loadDB() || seedData();
 if (!db.sources || !db.sources.length) db.sources = defaultSources();
 if (db.syncWithinDays == null) db.syncWithinDays = 14; // 取り込みは直近この日数の予約のみ（0=全期間）
+ensureKnownSheets(); // 既知4シートのURLを自動補完
 
 /* ---------- ユーティリティ ---------- */
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -726,7 +744,7 @@ function importRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v4"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v5"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -734,6 +752,7 @@ async function runSync() {
   const btn = $("#syncBtn"), label = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "同期中…"; }
   const t = { added: 0, cancelled: 0, dup: 0, old: 0, reschedule: 0, empty: 0 };
+  const results = [];
   let failed = 0;
   for (const s of srcs) {
     try {
@@ -743,12 +762,12 @@ async function runSync() {
       const per = { added: 0, cancelled: 0, dup: 0, old: 0, reschedule: 0, empty: 0 };
       objs.forEach((o) => { const r = importRow(o, s); t[r]++; per[r]++; });
       console.log(`[${SYNC_BUILD}] 「${s.label}」: ${objs.length}行 →`, per);
-    } catch (e) { console.error(`[${SYNC_BUILD}] 取得失敗:`, s.label, e); failed++; }
+      results.push(`${s.label}+${per.added + per.cancelled}`);
+    } catch (e) { console.error(`[${SYNC_BUILD}] 取得失敗:`, s.label, e); failed++; results.push(`${s.label}✗失敗`); }
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v4)：${t.added}件追加${t.cancelled ? `・${t.cancelled}件キャンセル` : ""}｜スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
-  if (failed) msg += `／${failed}経路で取得失敗`;
+  let msg = `同期(v5)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
