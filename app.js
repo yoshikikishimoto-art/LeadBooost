@@ -628,6 +628,7 @@ const SYNC_COLS = {
   extId:  ["イベントID", "予約ID", "予約番号", "event_id", "ID", "id"],
   note:   ["コメント", "メモ", "備考", "note"],
   status: ["ステータス", "状態", "予約状態", "予約ステータス", "status", "Status"],
+  advisor:["参加メンバー", "担当者", "担当", "アサイン", "メンバー"],
 };
 const CANCEL_RE = /キャンセル|取消|取り消|cancel|declin|no[\s-]?show|不参加|辞退/i;
 const RESCHEDULED_RE = /日程変更|リスケ|reschedul/i; // 新しい確定行に置き換わった古い行 → 取り込まない
@@ -691,13 +692,22 @@ function colVal(obj, field) {
   }
 })();
 
+// 担当者名からアドバイザーを取得（無ければ自動登録）。複数名は先頭をメイン担当に
+function findOrCreateAdvisor(name) {
+  name = (name || "").split(/[,、，/／]/)[0].trim();
+  if (!name) return "";
+  let a = db.advisors.find((x) => x.name === name);
+  if (!a) { a = { id: uid(), name, email: "" }; db.advisors.push(a); }
+  return a.id;
+}
+
 function newCandidateFromRow(o, src, stage, extId) {
   const nm = parseName(colVal(o, "name"));
   return {
     id: uid(), name: nm.name || colVal(o, "email"), kana: nm.kana,
     email: colVal(o, "email"), phone: colVal(o, "phone"),
     currentJob: "", desiredJob: "", desiredSalary: "", skills: [],
-    company: "", position: "", advisorId: "",
+    company: "", position: "", advisorId: findOrCreateAdvisor(colVal(o, "advisor")),
     source: src.key, extId, stage,
     createdAt: today(), updatedAt: today(), activities: [],
   };
@@ -736,7 +746,14 @@ function importRow(o, src) {
     return "cancelled";
   }
 
-  if (existing) return "dup";
+  if (existing) {
+    // 既存でも担当者が未割当ならシートの参加メンバーで補完
+    if (!existing.advisorId) {
+      const adv = findOrCreateAdvisor(colVal(o, "advisor"));
+      if (adv) { existing.advisorId = adv; existing.updatedAt = today(); }
+    }
+    return "dup";
+  }
   const c = newCandidateFromRow(o, src, "booked", extId);
   const note = colVal(o, "note");
   logActivity(c, `${src.label}で予約${date ? `（${date}）` : ""}${note ? `／${note}` : ""}`, "create");
@@ -744,7 +761,7 @@ function importRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v5"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v6"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -767,7 +784,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v5)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v6)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
