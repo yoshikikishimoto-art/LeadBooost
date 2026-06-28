@@ -18,13 +18,18 @@ const STAGES = [
 const STAGE_MAP = Object.fromEntries(STAGES.map((s) => [s.key, s]));
 const CLOSED = { key: "closed", label: "終了（辞退・見送り）", color: "var(--stage-closed)" };
 
-/* ---------- 流入経路（リード獲得チャネルの単一ソース） ---------- */
-const SOURCES = [
-  { key: "timerex",  label: "TimeRex予約",        color: "var(--source-timerex)"  },
-  { key: "referral", label: "リファラル（LINE）",  color: "var(--source-referral)" },
-];
-const SOURCE_MAP = Object.fromEntries(SOURCES.map((s) => [s.key, s]));
-function sourceOf(c) { return SOURCE_MAP[c.source] || null; }
+/* ---------- 流入経路（リード獲得チャネル。db.sources で動的管理） ----------
+   流入経路は4つ以上に増える前提で、設定画面（TimeRex設定）から
+   「経路名 + CSV URL」を追加・編集できる。色はパレットから自動割当。 */
+const SOURCE_PALETTE = ["#2563eb", "#12a150", "#d97706", "#7c3aed", "#0d9488", "#db2777", "#0ea5e9", "#65a30d"];
+function defaultSources() {
+  return [
+    { key: "timerex",  label: "TimeRex予約",       color: "#2563eb", csvUrl: "" },
+    { key: "referral", label: "リファラル（LINE）", color: "#12a150", csvUrl: "" },
+  ];
+}
+function sources() { return (db.sources && db.sources.length) ? db.sources : (db.sources = defaultSources()); }
+function sourceOf(c) { return sources().find((s) => s.key === c.source) || null; }
 
 /* ---------- ストレージ ---------- */
 const DB_KEY = "talentflow.db.v2";
@@ -39,6 +44,7 @@ function loadDB() {
 function saveDB() { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
 
 let db = loadDB() || seedData();
+if (!db.sources || !db.sources.length) db.sources = defaultSources();
 
 /* ---------- ユーティリティ ---------- */
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -51,6 +57,8 @@ function fmtDate(d) { if (!d) return "—"; const x = new Date(d); return `${x.g
 function daysSince(d) { if (!d) return 0; return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); }
 function advisorName(id) { const a = db.advisors.find((x) => x.id === id); return a ? a.name : "未割当"; }
 function stageOf(c) { return c.stage === "closed" ? CLOSED : (STAGE_MAP[c.stage] || STAGES[0]); }
+// 終了の場合は理由（事前キャンセル等）を反映したラベルを返す
+function stageLabelOf(c) { return (c.stage === "closed" && c.closeReason) ? `終了（${c.closeReason}）` : stageOf(c).label; }
 
 function toast(msg) {
   const t = $("#toast");
@@ -113,13 +121,14 @@ function renderDashboard() {
   ];
 
   // 流入経路の内訳
-  const srcRows = SOURCES.map((s) => {
+  const srcRows = sources().map((s) => {
     const list = cs.filter((c) => c.source === s.key);
     const joined = list.filter((c) => ["join", "refund"].includes(c.stage)).length;
     return { ...s, total: list.length, joined };
   });
   const srcUnknown = cs.filter((c) => !c.source).length;
   const srcMax = Math.max(1, ...srcRows.map((r) => r.total), srcUnknown);
+  const cancelledTotal = cs.filter((c) => c.stage === "closed" && c.closeReason).length;
 
   const recent = cs
     .flatMap((c) => (c.activities || []).map((a) => ({ ...a, cand: c })))
@@ -163,7 +172,7 @@ function renderDashboard() {
               <div class="funnel-count">${srcUnknown}</div>
             </div>` : ""}
         </div>
-        <div class="src-note">入社：${srcRows.map((r) => `${r.label} ${r.joined}名`).join(" ／ ")}</div>
+        <div class="src-note">入社：${srcRows.map((r) => `${esc(r.label)} ${r.joined}名`).join(" ／ ")}${cancelledTotal ? `<br>事前キャンセル：${cancelledTotal}件` : ""}</div>
       </div>
     </div>
     <div class="card panel" style="margin-top:var(--sp-4)">
@@ -262,7 +271,7 @@ function renderCandidates() {
       <div class="select-wrap">
         <select class="select" id="fsource">
           ${opt("", "すべての流入経路", !filters.source)}
-          ${SOURCES.map((s) => opt(s.key, s.label, filters.source === s.key)).join("")}
+          ${sources().map((s) => opt(s.key, s.label, filters.source === s.key)).join("")}
         </select>
       </div>
       <div class="select-wrap">
@@ -293,8 +302,8 @@ function rowCandidate(c) {
         <span class="avatar">${esc(initials(c.name))}</span>
         <div><div class="name">${esc(c.name)}</div><div class="sub">${esc(c.kana || "")}</div></div>
       </div></td>
-      <td><span class="badge" data-stage="${s.key}"><span class="dot"></span>${s.label}</span></td>
-      <td>${src ? `<span class="src-badge" data-source="${src.key}">${src.label}</span>` : `<span class="muted">—</span>`}</td>
+      <td><span class="badge" data-stage="${s.key}"><span class="dot"></span>${esc(stageLabelOf(c))}</span></td>
+      <td>${src ? `<span class="src-badge" style="color:${src.color};background:${src.color}22">${esc(src.label)}</span>` : `<span class="muted">—</span>`}</td>
       <td>${esc(c.company || "—")}<div class="sub muted" style="font-size:12px">${esc(c.desiredJob || "")}</div></td>
       <td>${esc(advisorName(c.advisorId))}</td>
       <td class="muted">${fmtDate(c.updatedAt)}</td>
@@ -362,7 +371,7 @@ function openCandidateForm(c) {
   c = c || {};
   const advOpts = db.advisors.map((a) => `<option value="${a.id}" ${c.advisorId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
   const stageOpts = [...STAGES, CLOSED].map((s) => `<option value="${s.key}" ${(c.stage || "booked") === s.key ? "selected" : ""}>${s.label}</option>`).join("");
-  const sourceOpts = SOURCES.map((s) => `<option value="${s.key}" ${c.source === s.key ? "selected" : ""}>${s.label}</option>`).join("");
+  const sourceOpts = sources().map((s) => `<option value="${s.key}" ${c.source === s.key ? "selected" : ""}>${esc(s.label)}</option>`).join("");
   openModal(`
     <div class="modal-head">
       <div><div class="modal-title">${isNew ? "求職者を追加" : "求職者を編集"}</div></div>
@@ -471,7 +480,7 @@ function openDetail(id) {
       <div class="detail-head">
         <span class="avatar">${esc(initials(c.name))}</span>
         <div>
-          <div class="detail-name">${esc(c.name)} <span class="badge" data-stage="${s.key}" style="margin-left:6px"><span class="dot"></span>${s.label}</span></div>
+          <div class="detail-name">${esc(c.name)} <span class="badge" data-stage="${s.key}" style="margin-left:6px"><span class="dot"></span>${esc(stageLabelOf(c))}</span></div>
           <div class="detail-meta">${esc(c.kana || "")}　担当：${esc(advisorName(c.advisorId))}</div>
         </div>
       </div>
@@ -488,6 +497,7 @@ function openDetail(id) {
       <div class="section-label">求職者情報</div>
       <div class="form-grid">
         ${row("流入経路", sourceOf(c)?.label)}
+        ${c.stage === "closed" ? row("終了理由", c.closeReason || "辞退・見送り") : ""}
         ${row("メール", c.email)}
         ${row("電話", c.phone)}
         ${row("現職 / 経歴", c.currentJob)}
@@ -582,20 +592,24 @@ function saveAdvisor() {
 }
 
 /* =========================================================
-   TimeRex連携：GoogleスプレッドシートのCSVから予約を取り込む
-   （TimeRex →(Webhook/Zapier)→ シート保存 を前提に、本アプリは公開CSVを読むだけ）
+   流入経路の同期：各流入経路のGoogleスプレッドシート(CSV)から予約を取り込む
+   （TimeRex等 →(Webhook/Zapier)→ シート保存 を前提に、本アプリは公開CSVを読むだけ）
+   - 流入経路ごとにCSV URLを設定（db.sources[].csvUrl）
+   - ステータス列が「キャンセル/取消」の予約は 終了（キャンセル）へ自動移動
    ========================================================= */
-const SYNC_URL_KEY = "talentflow.syncUrl";
+const SYNC_URL_KEY = "talentflow.syncUrl"; // 旧バージョンの単一URL（移行用）
 
 // 列名の揺れを吸収（シート側のヘッダーが多少違っても拾う）
 const SYNC_COLS = {
-  name:  ["氏名", "名前", "お名前", "name", "Name"],
-  email: ["メール", "メールアドレス", "Email", "email", "mail", "E-mail"],
-  phone: ["電話", "電話番号", "TEL", "tel", "phone"],
-  date:  ["予約日時", "日時", "開始日時", "予定日時", "面談日時", "予約日", "datetime", "start"],
-  extId: ["予約ID", "予約番号", "イベントID", "ID", "id", "event_id"],
-  note:  ["メモ", "備考", "コメント", "note"],
+  name:   ["氏名", "名前", "お名前", "name", "Name"],
+  email:  ["メール", "メールアドレス", "Email", "email", "mail", "E-mail"],
+  phone:  ["電話", "電話番号", "TEL", "tel", "phone"],
+  date:   ["予約日時", "日時", "開始日時", "予定日時", "面談日時", "予約日", "datetime", "start"],
+  extId:  ["予約ID", "予約番号", "イベントID", "ID", "id", "event_id"],
+  note:   ["メモ", "備考", "コメント", "note"],
+  status: ["ステータス", "状態", "予約状態", "予約ステータス", "status", "Status"],
 };
+const CANCEL_RE = /キャンセル|取消|取り消|cancel|declin|no[\s-]?show|不参加|辞退/i;
 
 // 最小CSVパーサ（ダブルクォート/改行/カンマ対応）
 function parseCSV(text) {
@@ -626,77 +640,138 @@ function colVal(obj, field) {
   return "";
 }
 
+// 旧バージョンの単一URLを timerex 経路へ移行（既存ユーザーの設定を引き継ぐ）
+(function migrateLegacySyncUrl() {
+  const legacy = localStorage.getItem(SYNC_URL_KEY);
+  if (legacy && !sources().some((s) => s.csvUrl)) {
+    const tx = sources().find((s) => s.key === "timerex") || sources()[0];
+    if (tx) { tx.csvUrl = legacy; saveDB(); }
+  }
+})();
+
+function newCandidateFromRow(o, src, stage, extId) {
+  return {
+    id: uid(), name: colVal(o, "name") || colVal(o, "email"), kana: "",
+    email: colVal(o, "email"), phone: colVal(o, "phone"),
+    currentJob: "", desiredJob: "", desiredSalary: "", skills: [],
+    company: "", position: "", advisorId: "",
+    source: src.key, extId, stage,
+    createdAt: today(), updatedAt: today(), activities: [],
+  };
+}
+
+// 1行を取り込む。戻り値: "added" | "cancelled" | "skipped"
+function importRow(o, src) {
+  const name = colVal(o, "name"), email = colVal(o, "email"), date = colVal(o, "date");
+  if (!name && !email) return "skipped";
+  const rawId = colVal(o, "extId");
+  const extId = `${src.key}|` + (rawId || (email ? `${email}|${date}` : `${name}|${date}`));
+  const status = colVal(o, "status");
+  const existing = db.candidates.find((c) =>
+    (c.extId && c.extId === extId) ||
+    (email && c.email === email && c.source === src.key));
+
+  if (CANCEL_RE.test(status)) {
+    const reason = status || "事前キャンセル";
+    if (existing) {
+      // 既に終了済み、または着座以降に進んでいる予約は触らない（過去の取消が上書きしないように）
+      if (existing.stage === "closed" || existing.stage !== "booked") return "skipped";
+      const from = stageOf(existing).label;
+      existing.stage = "closed"; existing.closeReason = reason; existing.updatedAt = today();
+      logActivity(existing, `事前キャンセル（${reason}）でステージを「${from}」→「終了」に変更`, "stage");
+      return "cancelled";
+    }
+    // 新規のキャンセル行 → 終了（キャンセル）として記録（キャンセル率の集計用）
+    const c = newCandidateFromRow(o, src, "closed", extId);
+    c.closeReason = reason;
+    logActivity(c, `事前キャンセル（${reason}）を取り込み`, "create");
+    db.candidates.unshift(c);
+    return "cancelled";
+  }
+
+  if (existing) return "skipped";
+  const c = newCandidateFromRow(o, src, "booked", extId);
+  const note = colVal(o, "note");
+  logActivity(c, `${src.label}で予約${date ? `（${date}）` : ""}${note ? `／${note}` : ""}`, "create");
+  db.candidates.unshift(c);
+  return "added";
+}
+
 async function runSync() {
-  const url = localStorage.getItem(SYNC_URL_KEY);
-  if (!url) return openSyncModal();
+  const srcs = sources().filter((s) => s.csvUrl);
+  if (!srcs.length) return openSyncModal();
   const btn = $("#syncBtn"), label = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "同期中…"; }
-  try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const objs = rowsToObjects(parseCSV(await res.text()));
-    let added = 0, skipped = 0;
-    objs.forEach((o) => {
-      const name = colVal(o, "name");
-      const email = colVal(o, "email");
-      const date = colVal(o, "date");
-      if (!name && !email) return;
-      const extId = colVal(o, "extId") || (email ? `${email}|${date}` : `${name}|${date}`);
-      const dupe = db.candidates.find((c) =>
-        (c.extId && c.extId === extId) ||
-        (email && c.email === email && c.source === "timerex"));
-      if (dupe) { skipped++; return; }
-      const c = {
-        id: uid(), name: name || email, kana: "", email, phone: colVal(o, "phone"),
-        currentJob: "", desiredJob: "", desiredSalary: "", skills: [],
-        company: "", position: "", advisorId: "",
-        source: "timerex", stage: "booked", extId,
-        createdAt: today(), updatedAt: today(), activities: [],
-      };
-      const note = colVal(o, "note");
-      logActivity(c, `TimeRexで予約${date ? `（${date}）` : ""}${note ? `／${note}` : ""}`, "create");
-      db.candidates.unshift(c);
-      added++;
-    });
-    saveDB(); render();
-    toast(`TimeRex同期：${added}件追加・${skipped}件スキップ`);
-  } catch (e) {
-    console.error("sync failed", e);
-    toast("同期に失敗：URL/ウェブ公開設定/CORSをご確認ください");
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
+  let added = 0, cancelled = 0, skipped = 0, failed = 0;
+  for (const s of srcs) {
+    try {
+      const res = await fetch(s.csvUrl, { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      rowsToObjects(parseCSV(await res.text())).forEach((o) => {
+        const r = importRow(o, s);
+        if (r === "added") added++; else if (r === "cancelled") cancelled++; else skipped++;
+      });
+    } catch (e) { console.error("sync failed:", s.label, e); failed++; }
   }
+  saveDB(); render();
+  let msg = `同期：${added}件追加${cancelled ? `・${cancelled}件キャンセル` : ""}・${skipped}件スキップ`;
+  if (failed) msg += `（${failed}経路で取得失敗：URL/公開/CORS確認）`;
+  toast(msg);
+  if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
 }
 
 function openSyncModal() {
-  const cur = localStorage.getItem(SYNC_URL_KEY) || "";
+  const rowHtml = (s) => `
+    <div class="sync-row" data-key="${esc(s.key || "")}">
+      <input class="input" data-f="label" value="${esc(s.label || "")}" placeholder="流入経路名（例: TimeRex予約）" />
+      <input class="input" data-f="csvUrl" value="${esc(s.csvUrl || "")}" placeholder="GoogleスプレッドシートのCSV URL" />
+    </div>`;
   openModal(`
     <div class="modal-head">
-      <div class="modal-title">TimeRex同期の設定</div>
+      <div class="modal-title">流入経路と同期の設定</div>
       <button class="modal-close" onclick="closeModal()">×</button>
     </div>
     <div class="modal-body">
-      <p class="muted" style="margin-top:0">TimeRexの予約をためている<strong>GoogleスプレッドシートのCSV URL</strong>を貼り付けて「保存して同期」を押すと、未登録の予約を<strong>「予約」ステージ・流入「TimeRex予約」</strong>で取り込みます（重複は自動スキップ）。</p>
-      <div class="field full">
-        <label class="field-label">CSV URL（ウェブに公開 → カンマ区切り(.csv)）</label>
-        <input class="input" id="sync_url" value="${esc(cur)}" placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=0" />
-      </div>
-      <div class="section-label">想定する列（ヘッダー名）</div>
-      <p class="muted" style="font-size:12px">氏名 / メール / 予約日時（任意：電話・予約ID・メモ）。列名が多少違っても自動でマッチします。</p>
+      <p class="muted" style="margin-top:0">流入経路ごとに、保存先の<strong>GoogleスプレッドシートのCSV URL</strong>（ファイル→共有→ウェブに公開→カンマ区切り）を設定します。「保存して同期」で全シートから未登録の予約を取り込みます。</p>
+      <div class="section-label">流入経路 × シート</div>
+      <div id="syncRows">${[...sources(), { key: "", label: "", csvUrl: "" }].map(rowHtml).join("")}</div>
+      <button class="btn btn-outline btn-sm" type="button" onclick="addSyncRow()" style="margin-top:8px">＋ 行を追加</button>
+      <div class="section-label">取り込みルール</div>
+      <p class="muted" style="font-size:12px">列は自動マッチ：氏名 / メール / 予約日時（任意：電話・予約ID・メモ・ステータス）。<br><strong>ステータス列が「キャンセル/取消」</strong>の予約は「終了（キャンセル）」へ自動で移動します。重複は自動スキップ。</p>
     </div>
     <div class="modal-foot">
       <span></span>
       <div style="display:flex;gap:8px">
         <button class="btn btn-outline" onclick="closeModal()">キャンセル</button>
-        <button class="btn btn-primary" onclick="saveSyncUrlAndRun()">保存して同期</button>
+        <button class="btn btn-primary" onclick="saveSourcesAndSync()">保存して同期</button>
       </div>
     </div>`);
-  setTimeout(() => $("#sync_url")?.focus(), 50);
 }
-function saveSyncUrlAndRun() {
-  const url = $("#sync_url").value.trim();
-  if (!url) { toast("CSV URLを入力してください"); return; }
-  localStorage.setItem(SYNC_URL_KEY, url);
+function addSyncRow() {
+  const wrap = $("#syncRows");
+  if (!wrap) return;
+  const div = document.createElement("div");
+  div.className = "sync-row"; div.dataset.key = "";
+  div.innerHTML = `<input class="input" data-f="label" placeholder="流入経路名（例: 〇〇広告）" /><input class="input" data-f="csvUrl" placeholder="GoogleスプレッドシートのCSV URL" />`;
+  wrap.appendChild(div);
+}
+function saveSourcesAndSync() {
+  const rows = $$("#syncRows .sync-row").map((r) => ({
+    key: r.dataset.key || "",
+    label: $('[data-f="label"]', r).value.trim(),
+    csvUrl: $('[data-f="csvUrl"]', r).value.trim(),
+  })).filter((s) => s.label);
+  if (!rows.length) { toast("流入経路を1つ以上入力してください"); return; }
+  const prev = sources();
+  const used = new Set();
+  db.sources = rows.map((s, i) => {
+    let key = s.key;
+    if (!key || used.has(key)) key = "s_" + uid();
+    used.add(key);
+    const old = prev.find((x) => x.key === s.key);
+    return { key, label: s.label, color: (old && old.color) || SOURCE_PALETTE[i % SOURCE_PALETTE.length], csvUrl: s.csvUrl };
+  });
+  saveDB();
   closeModal();
   runSync();
 }
@@ -731,7 +806,7 @@ $("#resetBtn").addEventListener("click", () => {
 });
 
 // 関数をグローバル公開（onclick属性から呼ぶため）
-Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, saveSyncUrlAndRun, db });
+Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, db });
 
 render();
 
@@ -769,5 +844,5 @@ function seedData() {
     mk({ id: "c11", name: "井上 拓海", kana: "イノウエ タクミ", advisorId: "adv2", source: "timerex", stage: "closed", currentJob: "倉庫管理", desiredJob: "ITサポート", desiredSalary: "400万円", skills: [], updatedAt: "2026-06-19",
       activities: [{ id: "a13", date: "2026-06-19", type: "stage", text: "ステージを「予約」→「終了（辞退・見送り）」に変更" }, { id: "a14", date: "2026-06-19", type: "note", text: "予約日に来訪なし（No-show）。連絡つかず見送り" }] }),
   ];
-  return { advisors: A, candidates: C };
+  return { advisors: A, candidates: C, sources: defaultSources() };
 }

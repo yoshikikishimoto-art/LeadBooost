@@ -209,14 +209,15 @@ button { font-family: inherit; cursor: pointer; }
 .badge[data-stage="refund"]   { color: var(--stage-refund);   background: color-mix(in srgb, var(--stage-refund) 14%, #fff); }
 .badge[data-stage="closed"]   { color: var(--stage-closed);   background: color-mix(in srgb, var(--stage-closed) 16%, #fff); }
 
-/* 流入経路バッジ */
+/* 流入経路バッジ（色は流入経路ごとに動的指定＝インラインstyle） */
 .src-badge {
   display: inline-flex; align-items: center;
   height: 22px; padding: 0 9px; border-radius: var(--r-full);
   font-size: 12px; font-weight: 500; white-space: nowrap;
 }
-.src-badge[data-source="timerex"]  { color: var(--source-timerex);  background: color-mix(in srgb, var(--source-timerex) 12%, #fff); }
-.src-badge[data-source="referral"] { color: var(--source-referral); background: color-mix(in srgb, var(--source-referral) 14%, #fff); }
+
+/* 同期設定モーダルの行（流入経路名 + CSV URL） */
+.sync-row { display: grid; grid-template-columns: 1fr 1.5fr; gap: var(--sp-2); margin-bottom: var(--sp-2); }
 
 /* ============================ ダッシュボード ============================ */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); margin-bottom: var(--sp-6); }
