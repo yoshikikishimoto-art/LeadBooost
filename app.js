@@ -45,6 +45,7 @@ function saveDB() { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
 
 let db = loadDB() || seedData();
 if (!db.sources || !db.sources.length) db.sources = defaultSources();
+if (db.syncWithinDays == null) db.syncWithinDays = 14; // 取り込みは直近この日数の予約のみ（0=全期間）
 
 /* ---------- ユーティリティ ---------- */
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -52,6 +53,7 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const uid = () => "id-" + Math.random().toString(36).slice(2, 9);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const today = () => new Date().toISOString().slice(0, 10);
+const daysAgoISO = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
 const initials = (name) => (name || "?").trim().slice(0, 2);
 function fmtDate(d) { if (!d) return "—"; const x = new Date(d); return `${x.getMonth() + 1}/${x.getDate()}`; }
 function daysSince(d) { if (!d) return 0; return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); }
@@ -618,6 +620,14 @@ function parseName(raw) {
   return { name: (parts[0] || "").trim(), kana: (parts[1] || "").trim() };
 }
 
+// スケジュール文字列から予約日(YYYY-MM-DD)を取り出す
+// 例: "2026年6月29日 (月) 12:00 - 13:00（Asia/Tokyo）" / "2026/6/29" / "2026-06-29"
+function parseSchedDate(s) {
+  const m = String(s || "").match(/(\d{4})\D{1,2}(\d{1,2})\D{1,2}(\d{1,2})/);
+  if (!m) return "";
+  return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+}
+
 // 最小CSVパーサ（ダブルクォート/改行/カンマ対応）
 function parseCSV(text) {
   const rows = [];
@@ -675,6 +685,9 @@ function importRow(o, src) {
   const status = colVal(o, "status");
   // 日程変更済みの古い行は新しい確定行に置き換わっているので取り込まない
   if (RESCHEDULED_RE.test(status)) return "skipped";
+  // 取り込み範囲：直近N日より前の予約はスキップ（日付が読めない行は対象外＝取り込む）
+  const within = Number(db.syncWithinDays) || 0;
+  if (within > 0) { const sd = parseSchedDate(date); if (sd && sd < daysAgoISO(within)) return "skipped"; }
   const rawId = colVal(o, "extId");
   const extId = `${src.key}|` + (rawId || (email ? `${email}|${date}` : `${name}|${date}`));
   // 重複判定は一意キー（イベントID等）のみで行う。メールは使い回されるため使わない
@@ -745,6 +758,11 @@ function openSyncModal() {
       <div class="section-label">流入経路 × シート</div>
       <div id="syncRows">${[...sources(), { key: "", label: "", csvUrl: "" }].map(rowHtml).join("")}</div>
       <button class="btn btn-outline btn-sm" type="button" onclick="addSyncRow()" style="margin-top:8px">＋ 行を追加</button>
+      <div class="section-label">取り込み範囲</div>
+      <div class="field">
+        <label class="field-label">直近この日数の予約のみ取り込む（0 = 全期間）</label>
+        <input class="input" id="sync_within" type="number" min="0" value="${esc(db.syncWithinDays ?? 14)}" style="max-width:160px" />
+      </div>
       <div class="section-label">取り込みルール</div>
       <p class="muted" style="font-size:12px">列は自動マッチ：氏名 / メール / 予約日時（任意：電話・予約ID・メモ・ステータス）。<br><strong>ステータス列が「キャンセル/取消」</strong>の予約は「終了（キャンセル）」へ自動で移動します。重複は自動スキップ。</p>
     </div>
@@ -771,6 +789,7 @@ function saveSourcesAndSync() {
     csvUrl: $('[data-f="csvUrl"]', r).value.trim(),
   })).filter((s) => s.label);
   if (!rows.length) { toast("流入経路を1つ以上入力してください"); return; }
+  db.syncWithinDays = Math.max(0, parseInt($("#sync_within")?.value, 10) || 0);
   const prev = sources();
   const used = new Set();
   db.sources = rows.map((s, i) => {
