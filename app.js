@@ -19,6 +19,14 @@ const STAGE_MAP = Object.fromEntries(STAGES.map((s) => [s.key, s]));
 const CLOSED = { key: "closed", label: "終了（辞退・見送り）", color: "var(--stage-closed)" };
 const REFERRAL = { key: "referral", label: "リファラル（面談設定前）", color: "var(--source-referral)" }; // 日程・担当未定の獲得段階
 
+/* ---------- 選考企業（候補者ごとに複数）／売上・読み票 ---------- */
+const APP_STATUSES = ["提案", "応諾", "書類選考", "一次面接", "二次面接", "最終面接", "内定", "内定承諾", "入社", "見送り"];
+const CONFIDENCE = [{ key: "A", label: "A（高）", p: 0.8 }, { key: "B", label: "B（中）", p: 0.5 }, { key: "C", label: "C（低）", p: 0.2 }];
+function confP(k) { const c = CONFIDENCE.find((x) => x.key === k); return c ? c.p : 0.5; }
+// 読み額：入社=確定(満額)、見送り=0、それ以外=想定売上×確度
+function appYomi(a) { const fee = Number(a.fee) || 0; return a.status === "入社" ? fee : a.status === "見送り" ? 0 : Math.round(fee * confP(a.conf)); }
+const fmtYen = (n) => `¥${(Number(n) || 0).toLocaleString("en-US")}`;
+
 /* ---------- 流入経路（リード獲得チャネル。db.sources で動的管理） ----------
    流入経路は4つ以上に増える前提で、設定画面（TimeRex設定）から
    「経路名 + CSV URL」を追加・編集できる。色はパレットから自動割当。 */
@@ -115,6 +123,7 @@ const VIEW_META = {
   referrals:  { title: "リファラル管理", sub: "日程・担当が未定のリファラル獲得を管理し、面談設定する" },
   pipeline:   { title: "パイプライン",  sub: "ドラッグで 予約→着座→…→入社 のステージを移動" },
   candidates: { title: "求職者一覧",    sub: "登録された求職者を検索・絞り込み" },
+  yomi:       { title: "読み票（売上）", sub: "候補者×企業の選考から、確定売上と読み額を集計" },
   advisors:   { title: "アドバイザー",  sub: "キャリアアドバイザーと担当状況・引き継ぎ" },
 };
 
@@ -128,6 +137,7 @@ function render() {
   else if (currentView === "referrals") { view.innerHTML = renderReferrals(); bindReferrals(); }
   else if (currentView === "pipeline") { view.innerHTML = renderPipeline(); bindBoard(); }
   else if (currentView === "candidates") { view.innerHTML = renderCandidates(); bindCandidates(); }
+  else if (currentView === "yomi") { view.innerHTML = renderYomi(); bindYomi(); }
   else if (currentView === "advisors") view.innerHTML = renderAdvisors();
 }
 
@@ -825,6 +835,9 @@ function openDetail(id) {
         ${skills}
       </div>
 
+      <div class="section-label">選考企業（売上・読み）</div>
+      ${renderApplications(c)}
+
       <div class="section-label">活動履歴 / アドバイザー連携メモ</div>
       <div class="add-note">
         <input class="input" id="noteInput" placeholder="連絡内容や面談メモを記録…" />
@@ -840,6 +853,121 @@ function openDetail(id) {
       </div>
     </div>`);
   $("#noteInput")?.addEventListener("keydown", (e) => { if (e.key === "Enter") addNote(c.id); });
+  $$(".app-row .app-f").forEach((el) => el.addEventListener("change", () => updateApplication(c.id, el.closest(".app-row").dataset.app, el.dataset.f, el.value)));
+  $$("[data-appadd]").forEach((b) => b.addEventListener("click", () => addApplication(b.dataset.appadd)));
+  $$("[data-appdel]").forEach((b) => b.addEventListener("click", () => deleteApplication(c.id, b.dataset.appdel)));
+}
+
+/* 候補者の選考企業（売上・読み） */
+function renderApplications(c) {
+  const apps = c.applications || [];
+  const statusOpt = (cur) => APP_STATUSES.map((s) => `<option ${s === cur ? "selected" : ""}>${s}</option>`).join("");
+  const confOpt = (cur) => CONFIDENCE.map((x) => `<option value="${x.key}" ${x.key === cur ? "selected" : ""}>${x.label}</option>`).join("");
+  const rows = apps.map((a) => `
+    <div class="app-row" data-app="${a.id}">
+      <input class="input app-f" data-f="company" value="${esc(a.company || "")}" placeholder="企業名" />
+      <div class="select-wrap"><select class="select app-f" data-f="status">${statusOpt(a.status)}</select></div>
+      <input class="input app-f" data-f="fee" type="number" min="0" step="10000" value="${Number(a.fee) || 0}" placeholder="想定売上" />
+      <div class="select-wrap"><select class="select app-f" data-f="conf">${confOpt(a.conf)}</select></div>
+      <span class="app-yomi">${fmtYen(appYomi(a))}</span>
+      <button class="btn btn-danger btn-sm" data-appdel="${a.id}" title="削除">×</button>
+    </div>`).join("");
+  const totalFee = apps.filter((a) => a.status !== "見送り").reduce((s, a) => s + (Number(a.fee) || 0), 0);
+  const totalYomi = apps.reduce((s, a) => s + appYomi(a), 0);
+  return `
+    <div class="app-list">
+      <div class="app-head"><span>企業</span><span>選考ステータス</span><span>想定売上</span><span>確度</span><span>読み額</span><span></span></div>
+      ${rows}
+      ${apps.length ? `<div class="app-foot">想定売上計 ${fmtYen(totalFee)}　／　読み額計 <strong class="pos">${fmtYen(totalYomi)}</strong></div>` : `<div class="empty" style="padding:var(--sp-4)">提案企業がありません。「＋企業を追加」から登録してください</div>`}
+    </div>
+    <button class="btn btn-outline btn-sm" data-appadd="${c.id}" style="margin-top:8px">＋ 企業を追加</button>`;
+}
+function addApplication(candId) {
+  const c = db.candidates.find((x) => x.id === candId); if (!c) return;
+  (c.applications = c.applications || []).push({ id: uid(), company: "", status: "提案", fee: 0, conf: "B", createdAt: today(), updatedAt: today() });
+  saveDB(); openDetail(candId);
+}
+function updateApplication(candId, appId, field, value) {
+  const c = db.candidates.find((x) => x.id === candId); if (!c) return;
+  const a = (c.applications || []).find((x) => x.id === appId); if (!a) return;
+  a[field] = field === "fee" ? (Number(value) || 0) : value;
+  a.updatedAt = today(); c.updatedAt = today();
+  if (field === "status") logActivity(c, `${a.company || "企業"}：選考を「${value}」に更新`, "stage");
+  saveDB(); openDetail(candId);
+}
+function deleteApplication(candId, appId) {
+  const c = db.candidates.find((x) => x.id === candId); if (!c) return;
+  c.applications = (c.applications || []).filter((x) => x.id !== appId);
+  saveDB(); openDetail(candId);
+}
+
+/* ---------------------- 読み票（売上） ---------------------- */
+function allApplications() {
+  const out = [];
+  db.candidates.forEach((c) => (c.applications || []).forEach((a) => out.push({ c, a })));
+  return out;
+}
+function renderYomi() {
+  const active = allApplications().filter((r) => r.a.status !== "見送り").sort((x, y) => appYomi(y.a) - appYomi(x.a));
+  const totalFee = active.reduce((s, r) => s + (Number(r.a.fee) || 0), 0);
+  const totalYomi = active.reduce((s, r) => s + appYomi(r.a), 0);
+  const confirmed = active.filter((r) => r.a.status === "入社").reduce((s, r) => s + (Number(r.a.fee) || 0), 0);
+  const byConf = CONFIDENCE.map((cf) => {
+    const list = active.filter((r) => r.a.status !== "入社" && r.a.conf === cf.key);
+    return { label: cf.label, yomi: list.reduce((s, r) => s + appYomi(r.a), 0), count: list.length };
+  });
+  const kpis = [
+    { label: "確定売上（入社）", value: fmtYen(confirmed), foot: `${active.filter((r) => r.a.status === "入社").length} 件` },
+    { label: "読み額 合計", value: fmtYen(totalYomi), foot: "確定＋進行中の読み" },
+    { label: "想定売上 合計", value: fmtYen(totalFee), foot: `進行中 ${active.length} 件` },
+    { label: "確度別 読み", value: "", foot: byConf.map((b) => `${b.label.slice(0, 1)} ${fmtYen(b.yomi)}`).join("　") },
+  ];
+  return `
+    <div class="kpi-grid">
+      ${kpis.map((k) => `<div class="card kpi"><div class="kpi-label">${k.label}</div><div class="kpi-value" style="font-size:24px">${k.value}</div><div class="kpi-foot">${k.foot}</div></div>`).join("")}
+    </div>
+    <div class="filter-row">
+      <span class="muted">進行中の選考 <strong>${active.length}</strong> 件（見送りは除く）</span>
+      <button class="btn btn-outline btn-sm" id="yomiCsv" style="margin-left:auto">⬇ 読み票CSV</button>
+    </div>
+    <div class="card table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>候補者</th><th>企業</th><th>選考ステータス</th><th>担当者</th><th style="text-align:right">想定売上</th><th>確度</th><th style="text-align:right">読み額</th>
+        </tr></thead>
+        <tbody>
+          ${active.length ? active.map(({ c, a }) => `
+            <tr data-id="${c.id}">
+              <td>${esc(c.name)}</td>
+              <td>${esc(a.company || "—")}</td>
+              <td><span class="badge" data-stage="${a.status === "入社" ? "join" : a.status === "内定" || a.status === "内定承諾" ? "offer" : "screen"}"><span class="dot"></span>${esc(a.status)}</span></td>
+              <td>${esc(advisorName(c.advisorId))}</td>
+              <td style="text-align:right">${fmtYen(a.fee)}</td>
+              <td>${a.status === "入社" ? "確定" : esc((CONFIDENCE.find((x) => x.key === a.conf) || {}).label || a.conf || "")}</td>
+              <td style="text-align:right"><strong>${fmtYen(appYomi(a))}</strong></td>
+            </tr>`).join("") : `<tr><td colspan="7"><div class="empty">選考企業が登録されていません。求職者の詳細→「選考企業」から追加してください</div></td></tr>`}
+        </tbody>
+        ${active.length ? `<tfoot><tr class="yomi-total">
+          <td colspan="4">合計</td>
+          <td style="text-align:right">${fmtYen(totalFee)}</td><td></td>
+          <td style="text-align:right"><strong class="pos">${fmtYen(totalYomi)}</strong></td>
+        </tr></tfoot>` : ""}
+      </table>
+    </div>`;
+}
+function bindYomi() {
+  $("#yomiCsv")?.addEventListener("click", exportYomiCSV);
+  $$(".tbl tbody tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDetail(tr.dataset.id)));
+}
+function exportYomiCSV() {
+  const active = allApplications().filter((r) => r.a.status !== "見送り").sort((x, y) => appYomi(y.a) - appYomi(x.a));
+  const cols = ["候補者", "企業", "選考ステータス", "担当者", "想定売上", "確度", "読み額", "更新日"];
+  const rows = active.map(({ c, a }) => [
+    c.name, a.company || "", a.status, advisorName(c.advisorId),
+    Number(a.fee) || 0, a.status === "入社" ? "確定" : a.conf || "", appYomi(a), a.updatedAt || "",
+  ]);
+  downloadCSV(`読み票_${today()}.csv`, [cols, ...rows]);
+  toast(`読み票 ${active.length}件をCSVでダウンロードしました`);
 }
 
 function nextStageButtons(c) {
@@ -1105,7 +1233,7 @@ function importReferralRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v13"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v14"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -1129,7 +1257,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v13)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v14)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
