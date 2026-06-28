@@ -156,7 +156,7 @@ function render() {
 
 /* ---------------------- ダッシュボード ---------------------- */
 function renderDashboard() {
-  const cs = db.candidates;
+  const cs = db.candidates.filter(inScope);
   const active = cs.filter((c) => c.stage !== "closed");
   const counts = Object.fromEntries(STAGES.map((s) => [s.key, cs.filter((c) => c.stage === s.key).length]));
   const max = Math.max(1, ...STAGES.map((s) => counts[s.key]));
@@ -277,7 +277,7 @@ function calEvent(c) {
 function renderCalendar() {
   const onCal = (c) => c.scheduledAt && c.stage !== "closed";
   const byDate = {};
-  db.candidates.forEach((c) => { if (onCal(c)) (byDate[c.scheduledAt] = byDate[c.scheduledAt] || []).push(c); });
+  db.candidates.forEach((c) => { if (onCal(c) && inScope(c)) (byDate[c.scheduledAt] = byDate[c.scheduledAt] || []).push(c); });
   Object.values(byDate).forEach((l) => l.sort((a, b) => parseSchedTime(a.scheduledText).localeCompare(parseSchedTime(b.scheduledText))));
 
   const week = calView === "week";
@@ -356,7 +356,7 @@ function confChip(v) {
   return c ? `<span class="conf ${cls}">${esc(c)}</span>` : `<span class="muted">—</span>`;
 }
 function renderReferrals() {
-  const list = db.candidates.filter((c) => c.stage === "referral")
+  const list = db.candidates.filter((c) => c.stage === "referral" && inScope(c))
     .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
   return `
     <div class="filter-row">
@@ -449,7 +449,7 @@ function closeReferral(id) {
 
 /* ---------------------- パイプライン（カンバン） ---------------------- */
 function renderPipeline() {
-  const cs = db.candidates.filter((c) => c.stage !== "closed");
+  const cs = db.candidates.filter((c) => c.stage !== "closed" && inScope(c));
   const cols = STAGES.map((s) => {
     const items = cs.filter((c) => c.stage === s.key);
     return `
@@ -569,6 +569,7 @@ function rowCandidate(c) {
 function filteredCandidates() {
   const q = filters.q.trim().toLowerCase();
   return db.candidates.filter((c) => {
+    if (!inScope(c)) return false;
     if (filters.stage && c.stage !== filters.stage) return false;
     if (filters.source && c.source !== filters.source) return false;
     if (filters.advisor && c.advisorId !== filters.advisor) return false;
@@ -917,17 +918,18 @@ function deleteApplication(candId, appId) {
 /* ---------------------- 読み票（売上） ---------------------- */
 function allApplications() {
   const out = [];
-  db.candidates.forEach((c) => (c.applications || []).forEach((a) => out.push({ c, a })));
+  db.candidates.forEach((c) => { if (inScope(c)) (c.applications || []).forEach((a) => out.push({ c, a })); });
   return out;
 }
 function renderYomi() {
   const order = (st) => STAGES.findIndex((s) => s.key === st);
-  const activeCands = db.candidates.filter((c) => c.stage !== "closed" && c.stage !== "referral");
+  const scoped = db.candidates.filter(inScope);
+  const activeCands = scoped.filter((c) => c.stage !== "closed" && c.stage !== "referral");
   // 選考ファネル（候補者単位）
   const seatedCnt = activeCands.filter((c) => order(c.stage) >= order("seated")).length;
-  const onSelCnt = db.candidates.filter((c) => hasAppIn(c, SELECTION_SET)).length;
-  const offerCnt = db.candidates.filter((c) => hasAppIn(c, OFFER_SET)).length;
-  const joinedCnt = db.candidates.filter((c) => hasAppIn(c, ["入社"])).length;
+  const onSelCnt = scoped.filter((c) => hasAppIn(c, SELECTION_SET)).length;
+  const offerCnt = scoped.filter((c) => hasAppIn(c, OFFER_SET)).length;
+  const joinedCnt = scoped.filter((c) => hasAppIn(c, ["入社"])).length;
   const funnel = [
     { label: "着座", value: seatedCnt, foot: "着座以降の稼働中" },
     { label: "選考中（一次面接以上）", value: onSelCnt, foot: "どこかしら選考に乗っている" },
@@ -1267,7 +1269,7 @@ function importReferralRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v15"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v16"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -1291,7 +1293,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v15)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v16)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
@@ -1392,10 +1394,74 @@ $("#resetBtn").addEventListener("click", () => {
   }
 });
 
-// 関数をグローバル公開（onclick属性から呼ぶため）
-Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, openHandoff, runHandoff, openMeetingSetup, saveMeetingSetup, closeReferral, db });
+/* =========================================================
+   ログイン / 権限（開発用クライアントサイド・ロール）
+   ※将来バックエンド化したら、この役割・スコープ設計を本認証へ移行
+   ========================================================= */
+const SESSION_KEY = "talentflow.session";
+const ROLES = {
+  admin:      { label: "管理者（Admin）",   desc: "全データ・全機能・設定" },
+  manager:    { label: "マネージャー",       desc: "チーム全体の売上・進捗を閲覧" },
+  submanager: { label: "サブマネージャー",   desc: "チーム全体の売上・進捗を閲覧" },
+  ca:         { label: "CA（担当）",         desc: "自分の担当のみ表示・精査" },
+};
+const TEAM_ROLES = ["admin", "manager", "submanager"]; // 全体が見えるロール
+let session = (function () { try { return JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) { return null; } })();
+function isTeamView() { return !!session && TEAM_ROLES.includes(session.role); }
+function inScope(c) { return !session || isTeamView() || c.advisorId === session.advisorId; } // CAは自分の担当のみ
+function setSession(s) { session = s; localStorage.setItem(SESSION_KEY, JSON.stringify(s)); showApp(); }
+function logout() { session = null; localStorage.removeItem(SESSION_KEY); showLogin(); }
+function bootApp() { if (session) showApp(); else showLogin(); }
+function showApp() {
+  $("#loginScreen").hidden = true;
+  $("#app").hidden = false;
+  $(".sidebar-foot").style.display = session && session.role === "admin" ? "" : "none"; // 設定系は管理者のみ
+  updateSessionBar();
+  render();
+}
+function updateSessionBar() {
+  const el = $("#sessionBar");
+  if (!el) return;
+  if (!session) { el.innerHTML = ""; return; }
+  el.innerHTML = `<span class="sess-who"><span class="sess-role">${esc((ROLES[session.role] || {}).label || session.role)}</span>${session.name ? "：" + esc(session.name) : ""}</span><button class="btn btn-outline btn-sm" id="logoutBtn">切替/ログアウト</button>`;
+  $("#logoutBtn")?.addEventListener("click", logout);
+}
+function showLogin() {
+  $("#app").hidden = true;
+  const el = $("#loginScreen");
+  el.hidden = false;
+  const caOpts = db.advisors.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join("");
+  const roleCard = (r) => `<button class="login-card" data-login="${r}"><div class="login-role">${ROLES[r].label}</div><div class="login-desc">${ROLES[r].desc}</div></button>`;
+  el.innerHTML = `
+    <div class="login-box">
+      <div class="login-brand"><div class="brand-mark">TF</div><div><div class="brand-name">TalentFlow ログイン</div><div class="brand-sub">人材紹介 進捗管理</div></div></div>
+      <div class="login-dev">🔧 開発モード：どのアカウントでもログインできます</div>
+      <div class="login-grid">${roleCard("admin")}${roleCard("manager")}${roleCard("submanager")}</div>
+      <div class="login-ca">
+        <div class="login-role">CA（担当）としてログイン</div>
+        <div class="login-desc">選んだ担当者の案件だけを表示・精査します</div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <div class="select-wrap" style="flex:1"><select class="select" id="loginCa"><option value="">CAを選択…</option>${caOpts}</select></div>
+          <button class="btn btn-primary" data-login="ca">ログイン</button>
+        </div>
+      </div>
+    </div>`;
+  $$("[data-login]").forEach((b) => b.addEventListener("click", () => {
+    const role = b.dataset.login;
+    if (role === "ca") {
+      const id = $("#loginCa").value;
+      if (!id) { toast("CAを選択してください"); return; }
+      setSession({ role: "ca", advisorId: id, name: advisorName(id) });
+    } else {
+      setSession({ role, name: ROLES[role].label });
+    }
+  }));
+}
 
-render();
+// 関数をグローバル公開（onclick属性から呼ぶため）
+Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, openHandoff, runHandoff, openMeetingSetup, saveMeetingSetup, closeReferral, logout, db });
+
+bootApp();
 
 /* =========================================================
    サンプルデータ

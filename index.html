@@ -45,6 +45,7 @@
           <p class="page-sub" id="pageSub">求職者の進捗を一目で確認</p>
         </div>
         <div class="topbar-actions">
+          <span id="sessionBar" class="session-bar"></span>
           <button class="btn btn-outline" id="syncBtn" title="TimeRexの予約をスプレッドシートから取り込む">⟳ TimeRex同期</button>
           <button class="btn btn-primary" id="addCandidateBtn">＋ 求職者を追加</button>
         </div>
@@ -52,6 +53,9 @@
       <section class="view" id="view"></section>
     </main>
   </div>
+
+  <!-- ログイン画面 -->
+  <div id="loginScreen" hidden></div>
 
   <!-- モーダル: 求職者詳細/編集 -->
   <div class="modal-backdrop" id="modalBackdrop" hidden>
@@ -61,6 +65,6 @@
   <!-- トースト -->
   <div class="toast" id="toast" hidden></div>
 
-  <script src="app.js?v=15"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>
