@@ -266,6 +266,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
 .advisor-stat { font-size: 12px; color: var(--text-mute); }
 
 /* ============================ モーダル ============================ */
+/* hidden属性を確実に優先（author styleがUAの[hidden]を上書きしてしまう問題への対策） */
+[hidden] { display: none !important; }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(17, 24, 42, .45); display: grid; place-items: center; z-index: 50; padding: var(--sp-5); animation: fade .15s ease; }
 .modal { background: var(--bg-surface); border-radius: var(--r-xl); width: min(720px, 100%); max-height: 90vh; overflow: auto; box-shadow: var(--shadow-lg); animation: pop .18s cubic-bezier(.2,.8,.2,1); }
 @keyframes fade { from { opacity: 0; } }
