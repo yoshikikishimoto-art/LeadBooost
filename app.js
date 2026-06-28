@@ -787,7 +787,7 @@ function saveSourcesAndSync() {
     key: r.dataset.key || "",
     label: $('[data-f="label"]', r).value.trim(),
     csvUrl: $('[data-f="csvUrl"]', r).value.trim(),
-  })).filter((s) => s.label);
+  })).filter((s) => s.label || s.csvUrl); // 名前かURLどちらか入っていれば有効
   if (!rows.length) { toast("流入経路を1つ以上入力してください"); return; }
   db.syncWithinDays = Math.max(0, parseInt($("#sync_within")?.value, 10) || 0);
   const prev = sources();
@@ -797,7 +797,7 @@ function saveSourcesAndSync() {
     if (!key || used.has(key)) key = "s_" + uid();
     used.add(key);
     const old = prev.find((x) => x.key === s.key);
-    return { key, label: s.label, color: (old && old.color) || SOURCE_PALETTE[i % SOURCE_PALETTE.length], csvUrl: s.csvUrl };
+    return { key, label: s.label || `流入経路${i + 1}`, color: (old && old.color) || SOURCE_PALETTE[i % SOURCE_PALETTE.length], csvUrl: s.csvUrl };
   });
   saveDB();
   closeModal();
