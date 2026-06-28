@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalentFlow — 人材紹介 進捗管理</title>
+  <meta name="description" content="人材紹介会社向け：求職者の情報管理と 紹介→承諾→入社 までの一連フローを管理するサービス" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- サイドバー -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">TF</div>
+        <div class="brand-text">
+          <span class="brand-name">TalentFlow</span>
+          <span class="brand-sub">人材紹介 進捗管理</span>
+        </div>
+      </div>
+      <nav class="nav" id="nav">
+        <button class="nav-item is-active" data-view="dashboard"><span class="nav-ico">▤</span>ダッシュボード</button>
+        <button class="nav-item" data-view="pipeline"><span class="nav-ico">▥</span>パイプライン</button>
+        <button class="nav-item" data-view="candidates"><span class="nav-ico">≣</span>求職者一覧</button>
+        <button class="nav-item" data-view="advisors"><span class="nav-ico">◠</span>アドバイザー</button>
+      </nav>
+      <div class="sidebar-foot">
+        <button class="btn btn-ghost btn-sm" id="seedBtn" title="サンプルデータを再投入">サンプル投入</button>
+        <button class="btn btn-ghost btn-sm" id="resetBtn" title="全データを削除">データ初期化</button>
+      </div>
+    </aside>
+
+    <!-- メイン -->
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 class="page-title" id="pageTitle">ダッシュボード</h1>
+          <p class="page-sub" id="pageSub">求職者の進捗を一目で確認</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-primary" id="addCandidateBtn">＋ 求職者を追加</button>
+        </div>
+      </header>
+      <section class="view" id="view"></section>
+    </main>
+  </div>
+
+  <!-- モーダル: 求職者詳細/編集 -->
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <!-- トースト -->
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
