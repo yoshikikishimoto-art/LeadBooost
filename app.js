@@ -96,15 +96,17 @@ function logActivity(c, text, type = "note") {
 /* ---------- 状態 ---------- */
 let currentView = "dashboard";
 let filters = { q: "", stage: "", source: "", advisor: "" };
+let calMonth = today().slice(0, 7); // 面談カレンダーの表示月 YYYY-MM
 
 /* =========================================================
    ルーティング / レンダリング
    ========================================================= */
 const VIEW_META = {
   dashboard:  { title: "ダッシュボード", sub: "流入から入社・返金規定クリアまでの進捗を一目で確認" },
+  calendar:   { title: "面談カレンダー", sub: "予約・面談の日程をカレンダーで確認し、着座を報告" },
   pipeline:   { title: "パイプライン",  sub: "ドラッグで 予約→着座→…→入社 のステージを移動" },
   candidates: { title: "求職者一覧",    sub: "登録された求職者を検索・絞り込み" },
-  advisors:   { title: "アドバイザー",  sub: "キャリアアドバイザーと担当状況" },
+  advisors:   { title: "アドバイザー",  sub: "キャリアアドバイザーと担当状況・引き継ぎ" },
 };
 
 function render() {
@@ -113,6 +115,7 @@ function render() {
   $$("#nav .nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.view === currentView));
   const view = $("#view");
   if (currentView === "dashboard") view.innerHTML = renderDashboard();
+  else if (currentView === "calendar") { view.innerHTML = renderCalendar(); bindCalendar(); }
   else if (currentView === "pipeline") { view.innerHTML = renderPipeline(); bindBoard(); }
   else if (currentView === "candidates") { view.innerHTML = renderCandidates(); bindCandidates(); }
   else if (currentView === "advisors") view.innerHTML = renderAdvisors();
@@ -211,6 +214,71 @@ function renderDashboard() {
 }
 function activityIcon(type) { return { stage: "↗", note: "✎", create: "＋" }[type] || "•"; }
 
+/* ---------------------- 面談カレンダー ---------------------- */
+function shiftMonth(ym, delta) {
+  let [y, m] = ym.split("-").map(Number);
+  m += delta;
+  while (m < 1) { m += 12; y--; }
+  while (m > 12) { m -= 12; y++; }
+  return `${y}-${String(m).padStart(2, "0")}`;
+}
+function renderCalendar() {
+  const [y, m] = calMonth.split("-").map(Number);
+  const startDow = new Date(y, m - 1, 1).getDay();
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const byDate = {};
+  db.candidates.forEach((c) => { if (c.scheduledAt) (byDate[c.scheduledAt] = byDate[c.scheduledAt] || []).push(c); });
+  const monthCount = db.candidates.filter((c) => (c.scheduledAt || "").slice(0, 7) === calMonth).length;
+
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const dow = ["日", "月", "火", "水", "木", "金", "土"];
+
+  return `
+    <div class="cal-head">
+      <button class="btn btn-outline btn-sm" id="calPrev">←</button>
+      <div class="cal-title">${y}年${m}月<span class="muted" style="font-weight:400;margin-left:8px">面談 ${monthCount}件</span></div>
+      <button class="btn btn-outline btn-sm" id="calNext">→</button>
+      <button class="btn btn-outline btn-sm" id="calToday" style="margin-left:auto">今日へ</button>
+    </div>
+    <div class="cal-grid">
+      ${dow.map((w, i) => `<div class="cal-dow ${i === 0 ? "sun" : ""} ${i === 6 ? "sat" : ""}">${w}</div>`).join("")}
+      ${cells.map((d) => {
+        if (d === null) return `<div class="cal-cell is-empty"></div>`;
+        const ds = `${calMonth}-${String(d).padStart(2, "0")}`;
+        const list = (byDate[ds] || []).slice().sort((a, b) => parseSchedTime(a.scheduledText).localeCompare(parseSchedTime(b.scheduledText)));
+        return `<div class="cal-cell ${ds === today() ? "is-today" : ""}">
+          <div class="cal-day">${d}</div>
+          <div class="cal-events">
+            ${list.map((c) => {
+              const st = stageOf(c);
+              const tm = parseSchedTime(c.scheduledText);
+              return `<div class="cal-ev" data-id="${c.id}" title="${esc(c.name)}（${esc(stageLabelOf(c))}）${tm ? " " + tm : ""}">
+                <span class="dot" style="background:${st.color}"></span>
+                <span class="cal-ev-name">${tm ? `<b>${tm}</b> ` : ""}${esc(c.name)}</span>
+                ${c.stage === "booked" ? `<button class="cal-seat" data-seat="${c.id}" title="着座にする">着</button>` : ""}
+              </div>`;
+            }).join("")}
+          </div>
+        </div>`;
+      }).join("")}
+    </div>`;
+}
+function bindCalendar() {
+  $("#calPrev")?.addEventListener("click", () => { calMonth = shiftMonth(calMonth, -1); render(); });
+  $("#calNext")?.addEventListener("click", () => { calMonth = shiftMonth(calMonth, 1); render(); });
+  $("#calToday")?.addEventListener("click", () => { calMonth = today().slice(0, 7); render(); });
+  $$(".cal-seat").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); markSeated(b.dataset.seat); }));
+  $$(".cal-ev").forEach((el) => el.addEventListener("click", () => openDetail(el.dataset.id)));
+}
+function markSeated(id) {
+  const c = db.candidates.find((x) => x.id === id);
+  if (!c) return;
+  moveStage(c, "seated");
+  render();
+}
+
 /* ---------------------- パイプライン（カンバン） ---------------------- */
 function renderPipeline() {
   const cs = db.candidates.filter((c) => c.stage !== "closed");
@@ -300,7 +368,8 @@ function renderCandidates() {
           ${db.advisors.map((a) => opt(a.id, a.name, filters.advisor === a.id)).join("")}
         </select>
       </div>
-      <span class="muted" style="margin-left:auto">${list.length} 名</span>
+      <button class="btn btn-outline btn-sm" id="exportBtn" style="margin-left:auto">⬇ CSVダウンロード</button>
+      <span class="muted">${list.length} 名</span>
     </div>
     <div class="card table-wrap">
       <table class="tbl">
@@ -347,7 +416,29 @@ function bindCandidates() {
   $("#fstage").addEventListener("change", (e) => { filters.stage = e.target.value; render(); });
   $("#fsource").addEventListener("change", (e) => { filters.source = e.target.value; render(); });
   $("#fadvisor").addEventListener("change", (e) => { filters.advisor = e.target.value; render(); });
+  $("#exportBtn").addEventListener("click", exportCSV);
   $$(".tbl tbody tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDetail(tr.dataset.id)));
+}
+
+/* 現在の絞り込み結果をCSV（Excel可）でダウンロード。着座でフィルタすれば着座者一覧に */
+function csvCell(v) { v = String(v ?? ""); return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; }
+function exportCSV() {
+  const list = filteredCandidates();
+  const cols = ["氏名", "フリガナ", "メール", "電話", "流入経路", "ステージ", "担当者", "面談日時", "終了理由", "更新日"];
+  const rows = list.map((c) => [
+    c.name, c.kana || "", c.email || "", c.phone || "",
+    sourceOf(c)?.label || "", stageLabelOf(c), advisorName(c.advisorId),
+    c.scheduledText || "", c.closeReason || "", c.updatedAt || "",
+  ]);
+  const csv = [cols, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }); // BOM付きでExcelの文字化け回避
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  const tag = filters.stage ? `_${(STAGE_MAP[filters.stage] || CLOSED).label}` : "";
+  a.download = `求職者一覧${tag}_${today()}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+  toast(`${list.length}件をCSVでダウンロードしました`);
 }
 function refreshTableOnly() {
   const list = filteredCandidates();
@@ -371,13 +462,50 @@ function renderAdvisors() {
         return `
           <div class="card advisor-card">
             <span class="avatar">${esc(initials(a.name))}</span>
-            <div>
+            <div style="flex:1;min-width:0">
               <div class="advisor-name">${esc(a.name)}</div>
               <div class="advisor-stat">担当 ${load} 名 ・ 入社実績 ${joined} 名</div>
             </div>
+            ${load ? `<button class="btn btn-outline btn-sm" data-handoff="${a.id}">引き継ぎ</button>` : ""}
           </div>`;
       }).join("")}
     </div>`;
+}
+function openHandoff(fromId) {
+  const from = db.advisors.find((a) => a.id === fromId);
+  if (!from) return;
+  const total = db.candidates.filter((c) => c.advisorId === fromId).length;
+  const opts = db.advisors.filter((a) => a.id !== fromId).map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join("");
+  openModal(`
+    <div class="modal-head"><div class="modal-title">担当者の引き継ぎ</div><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="margin-top:0"><strong>${esc(from.name)}</strong> さんの担当（${total}名）を、別の担当者へまとめて引き継ぎます。</p>
+      <div class="field full"><label class="field-label">引き継ぎ先</label>
+        <div class="select-wrap"><select class="select" id="handoffTo">${opts || `<option value="">他に担当者がいません</option>`}</select></div>
+      </div>
+      <label class="field" style="flex-direction:row;align-items:center;gap:8px;margin-top:12px">
+        <input type="checkbox" id="handoffActiveOnly" checked /> <span>進行中のみ引き継ぐ（終了した求職者は除く）</span>
+      </label>
+    </div>
+    <div class="modal-foot"><span></span><div style="display:flex;gap:8px">
+      <button class="btn btn-outline" onclick="closeModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="runHandoff('${fromId}')">引き継ぐ</button>
+    </div></div>`);
+}
+function runHandoff(fromId) {
+  const toId = $("#handoffTo").value;
+  if (!toId) { toast("引き継ぎ先を選んでください"); return; }
+  const activeOnly = $("#handoffActiveOnly")?.checked;
+  const from = advisorName(fromId), to = advisorName(toId);
+  let n = 0;
+  db.candidates.forEach((c) => {
+    if (c.advisorId === fromId && (!activeOnly || c.stage !== "closed")) {
+      c.advisorId = toId;
+      logActivity(c, `担当者を「${from}」→「${to}」に引き継ぎ`, "note");
+      n++;
+    }
+  });
+  saveDB(); closeModal(); render(); toast(`${n}件を ${to} さんへ引き継ぎました`);
 }
 
 /* =========================================================
@@ -646,6 +774,10 @@ function parseSchedDate(s) {
   if (!m) return "";
   return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
 }
+function parseSchedTime(s) {
+  const m = String(s || "").match(/(\d{1,2}):(\d{2})/);
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
+}
 
 // 最小CSVパーサ（ダブルクォート/改行/カンマ対応）
 function parseCSV(text) {
@@ -703,12 +835,14 @@ function findOrCreateAdvisor(name) {
 
 function newCandidateFromRow(o, src, stage, extId) {
   const nm = parseName(colVal(o, "name"));
+  const date = colVal(o, "date");
   return {
     id: uid(), name: nm.name || colVal(o, "email"), kana: nm.kana,
     email: colVal(o, "email"), phone: colVal(o, "phone"),
     currentJob: "", desiredJob: "", desiredSalary: "", skills: [],
     company: "", position: "", advisorId: findOrCreateAdvisor(colVal(o, "advisor")),
     source: src.key, extId, stage,
+    scheduledAt: parseSchedDate(date), scheduledText: date,
     createdAt: today(), updatedAt: today(), activities: [],
   };
 }
@@ -747,11 +881,11 @@ function importRow(o, src) {
   }
 
   if (existing) {
-    // 既存でも担当者が未割当ならシートの参加メンバーで補完
-    if (!existing.advisorId) {
-      const adv = findOrCreateAdvisor(colVal(o, "advisor"));
-      if (adv) { existing.advisorId = adv; existing.updatedAt = today(); }
-    }
+    // 既存でも未設定の項目はシートで補完（担当者・面談日時）
+    let upd = false;
+    if (!existing.advisorId) { const adv = findOrCreateAdvisor(colVal(o, "advisor")); if (adv) { existing.advisorId = adv; upd = true; } }
+    if (!existing.scheduledAt) { const sd = parseSchedDate(date); if (sd) { existing.scheduledAt = sd; existing.scheduledText = date; upd = true; } }
+    if (upd) existing.updatedAt = today();
     return "dup";
   }
   const c = newCandidateFromRow(o, src, "booked", extId);
@@ -761,7 +895,7 @@ function importRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v6"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v7"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -784,7 +918,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v6)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v7)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
@@ -866,6 +1000,8 @@ $("#syncBtn").addEventListener("click", () => runSync());
 $("#syncCfgBtn")?.addEventListener("click", () => openSyncModal());
 $("#view").addEventListener("click", (e) => {
   if (e.target.id === "addAdvisorBtn") openAdvisorForm();
+  const h = e.target.closest("[data-handoff]");
+  if (h) openHandoff(h.dataset.handoff);
 });
 $("#modalBackdrop").addEventListener("click", (e) => { if (e.target.id === "modalBackdrop") closeModal(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
@@ -882,7 +1018,7 @@ $("#resetBtn").addEventListener("click", () => {
 });
 
 // 関数をグローバル公開（onclick属性から呼ぶため）
-Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, db });
+Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, openHandoff, runHandoff, db });
 
 render();
 

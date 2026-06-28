@@ -286,6 +286,30 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
 .advisor-name { font-weight: 700; }
 .advisor-stat { font-size: 12px; color: var(--text-mute); }
 
+/* ============================ 面談カレンダー ============================ */
+.cal-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-5); }
+.cal-title { font-size: 16px; font-weight: 700; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal-dow { text-align: center; font-size: 12px; font-weight: 500; color: var(--text-mute); padding: 4px 0; }
+.cal-dow.sun { color: var(--negative); }
+.cal-dow.sat { color: var(--accent); }
+.cal-cell { background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--r-md); min-height: 104px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.cal-cell.is-empty { background: transparent; border: 0; }
+.cal-cell.is-today { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.cal-day { font-size: 12px; font-weight: 700; color: var(--text-soft); }
+.cal-cell.is-today .cal-day { color: var(--accent); }
+.cal-events { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
+.cal-ev { display: flex; align-items: center; gap: 4px; font-size: 11px; background: var(--bg-subtle); border-radius: var(--r-sm); padding: 2px 5px; cursor: pointer; }
+.cal-ev:hover { background: var(--accent-soft); }
+.cal-ev .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.cal-ev-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-seat { flex-shrink: 0; border: 0; background: var(--stage-seated); color: #fff; border-radius: var(--r-sm); font-size: 10px; font-weight: 700; padding: 1px 6px; cursor: pointer; }
+.cal-seat:hover { filter: brightness(1.06); }
+@media (max-width: 760px) {
+  .cal-cell { min-height: 72px; }
+  .cal-ev-name { display: none; }
+}
+
 /* ============================ モーダル ============================ */
 /* hidden属性を確実に優先（author styleがUAの[hidden]を上書きしてしまう問題への対策） */
 [hidden] { display: none !important; }
