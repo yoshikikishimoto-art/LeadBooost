@@ -604,12 +604,19 @@ const SYNC_COLS = {
   name:   ["氏名", "名前", "お名前", "name", "Name"],
   email:  ["メール", "メールアドレス", "Email", "email", "mail", "E-mail"],
   phone:  ["電話", "電話番号", "TEL", "tel", "phone"],
-  date:   ["予約日時", "日時", "開始日時", "予定日時", "面談日時", "予約日", "datetime", "start"],
-  extId:  ["予約ID", "予約番号", "イベントID", "ID", "id", "event_id"],
-  note:   ["メモ", "備考", "コメント", "note"],
+  date:   ["スケジュール", "予約日時", "日時", "開始日時", "予定日時", "面談日時", "予約日", "datetime", "start"],
+  extId:  ["イベントID", "予約ID", "予約番号", "event_id", "ID", "id"],
+  note:   ["コメント", "メモ", "備考", "note"],
   status: ["ステータス", "状態", "予約状態", "予約ステータス", "status", "Status"],
 };
 const CANCEL_RE = /キャンセル|取消|取り消|cancel|declin|no[\s-]?show|不参加|辞退/i;
+const RESCHEDULED_RE = /日程変更|リスケ|reschedul/i; // 新しい確定行に置き換わった古い行 → 取り込まない
+
+// TimeRexの「名前」列は "氏名\tフリガナ" の形が多いので分離する
+function parseName(raw) {
+  const parts = String(raw || "").split(/\t/);
+  return { name: (parts[0] || "").trim(), kana: (parts[1] || "").trim() };
+}
 
 // 最小CSVパーサ（ダブルクォート/改行/カンマ対応）
 function parseCSV(text) {
@@ -650,8 +657,9 @@ function colVal(obj, field) {
 })();
 
 function newCandidateFromRow(o, src, stage, extId) {
+  const nm = parseName(colVal(o, "name"));
   return {
-    id: uid(), name: colVal(o, "name") || colVal(o, "email"), kana: "",
+    id: uid(), name: nm.name || colVal(o, "email"), kana: nm.kana,
     email: colVal(o, "email"), phone: colVal(o, "phone"),
     currentJob: "", desiredJob: "", desiredSalary: "", skills: [],
     company: "", position: "", advisorId: "",
@@ -664,12 +672,13 @@ function newCandidateFromRow(o, src, stage, extId) {
 function importRow(o, src) {
   const name = colVal(o, "name"), email = colVal(o, "email"), date = colVal(o, "date");
   if (!name && !email) return "skipped";
+  const status = colVal(o, "status");
+  // 日程変更済みの古い行は新しい確定行に置き換わっているので取り込まない
+  if (RESCHEDULED_RE.test(status)) return "skipped";
   const rawId = colVal(o, "extId");
   const extId = `${src.key}|` + (rawId || (email ? `${email}|${date}` : `${name}|${date}`));
-  const status = colVal(o, "status");
-  const existing = db.candidates.find((c) =>
-    (c.extId && c.extId === extId) ||
-    (email && c.email === email && c.source === src.key));
+  // 重複判定は一意キー（イベントID等）のみで行う。メールは使い回されるため使わない
+  const existing = db.candidates.find((c) => c.extId && c.extId === extId);
 
   if (CANCEL_RE.test(status)) {
     const reason = status || "事前キャンセル";
