@@ -198,6 +198,7 @@ function renderDashboard() {
             </div>` : ""}
         </div>
         <div class="src-note">入社：${srcRows.map((r) => `${esc(r.label)} ${r.joined}名`).join(" ／ ")}${cancelledTotal ? `<br>事前キャンセル：${cancelledTotal}件` : ""}</div>
+        <div class="src-dl"><span class="muted">着座管理シート：</span>${srcRows.map((r) => `<button class="btn btn-outline btn-sm" data-seatdl="${r.key}">⬇ ${esc(r.label)}</button>`).join("")}</div>
       </div>
     </div>
     <div class="card panel" style="margin-top:var(--sp-4)">
@@ -460,6 +461,14 @@ function bindCandidates() {
 
 /* 現在の絞り込み結果をCSV（Excel可）でダウンロード。着座でフィルタすれば着座者一覧に */
 function csvCell(v) { v = String(v ?? ""); return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; }
+function downloadCSV(filename, rows2d) {
+  const csv = rows2d.map((r) => r.map(csvCell).join(",")).join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }); // BOM付きでExcelの文字化け回避
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+}
 function exportCSV() {
   const list = filteredCandidates();
   const cols = ["氏名", "フリガナ", "メール", "電話", "流入経路", "ステージ", "担当者", "面談日時", "終了理由", "更新日"];
@@ -468,15 +477,31 @@ function exportCSV() {
     sourceOf(c)?.label || "", stageLabelOf(c), advisorName(c.advisorId),
     c.scheduledText || "", c.closeReason || "", c.updatedAt || "",
   ]);
-  const csv = [cols, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
-  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }); // BOM付きでExcelの文字化け回避
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
   const tag = filters.stage ? `_${(STAGE_MAP[filters.stage] || CLOSED).label}` : "";
-  a.download = `求職者一覧${tag}_${today()}.csv`;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(a.href);
+  downloadCSV(`求職者一覧${tag}_${today()}.csv`, [cols, ...rows]);
   toast(`${list.length}件をCSVでダウンロードしました`);
+}
+
+// 着座状況：着座/未着座/キャンセル/終了
+function seatingStatus(c) {
+  if (c.stage === "closed") return /キャンセル|取消|取り消|cancel|no[\s-]?show|不参加/i.test(c.closeReason || "") ? "キャンセル" : "終了";
+  const ord = STAGES.findIndex((s) => s.key === c.stage);
+  return ord >= STAGES.findIndex((s) => s.key === "seated") ? "着座" : "未着座";
+}
+// 各流入経路の着座管理シートをダウンロード
+function exportSeatingCSV(sourceKey) {
+  const src = sources().find((s) => s.key === sourceKey);
+  const list = db.candidates.filter((c) => c.source === sourceKey)
+    .sort((a, b) => (a.scheduledAt || "").localeCompare(b.scheduledAt || "") || parseSchedTime(a.scheduledText).localeCompare(parseSchedTime(b.scheduledText)));
+  const cols = ["面談日", "時刻", "氏名", "流入経路", "担当者", "ステージ", "着座状況", "終了理由", "メール", "電話"];
+  const rows = list.map((c) => [
+    c.scheduledAt || "", parseSchedTime(c.scheduledText) || "", c.name,
+    src ? src.label : "", advisorName(c.advisorId), stageLabelOf(c),
+    seatingStatus(c), c.closeReason || "", c.email || "", c.phone || "",
+  ]);
+  downloadCSV(`着座管理_${src ? src.label : sourceKey}_${today()}.csv`, [cols, ...rows]);
+  const seated = list.filter((c) => seatingStatus(c) === "着座").length;
+  toast(`${src ? src.label : ""} 着座管理シート：${list.length}件（着座${seated}）をDLしました`);
 }
 function refreshTableOnly() {
   const list = filteredCandidates();
@@ -933,7 +958,7 @@ function importRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v11"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v12"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -956,7 +981,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v11)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v12)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
@@ -1040,6 +1065,8 @@ $("#view").addEventListener("click", (e) => {
   if (e.target.id === "addAdvisorBtn") openAdvisorForm();
   const h = e.target.closest("[data-handoff]");
   if (h) openHandoff(h.dataset.handoff);
+  const sd = e.target.closest("[data-seatdl]");
+  if (sd) exportSeatingCSV(sd.dataset.seatdl);
 });
 $("#modalBackdrop").addEventListener("click", (e) => { if (e.target.id === "modalBackdrop") closeModal(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
