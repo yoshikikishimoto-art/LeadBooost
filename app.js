@@ -582,6 +582,126 @@ function saveAdvisor() {
 }
 
 /* =========================================================
+   TimeRex連携：GoogleスプレッドシートのCSVから予約を取り込む
+   （TimeRex →(Webhook/Zapier)→ シート保存 を前提に、本アプリは公開CSVを読むだけ）
+   ========================================================= */
+const SYNC_URL_KEY = "talentflow.syncUrl";
+
+// 列名の揺れを吸収（シート側のヘッダーが多少違っても拾う）
+const SYNC_COLS = {
+  name:  ["氏名", "名前", "お名前", "name", "Name"],
+  email: ["メール", "メールアドレス", "Email", "email", "mail", "E-mail"],
+  phone: ["電話", "電話番号", "TEL", "tel", "phone"],
+  date:  ["予約日時", "日時", "開始日時", "予定日時", "面談日時", "予約日", "datetime", "start"],
+  extId: ["予約ID", "予約番号", "イベントID", "ID", "id", "event_id"],
+  note:  ["メモ", "備考", "コメント", "note"],
+};
+
+// 最小CSVパーサ（ダブルクォート/改行/カンマ対応）
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += ch;
+    } else if (ch === '"') { inQ = true; }
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+    else if (ch !== "\r") { field += ch; }
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+function rowsToObjects(rows) {
+  if (!rows.length) return [];
+  const headers = rows[0].map((h) => h.trim());
+  return rows.slice(1)
+    .filter((r) => r.some((c) => (c || "").trim() !== ""))
+    .map((r) => { const o = {}; headers.forEach((h, i) => (o[h] = (r[i] || "").trim())); return o; });
+}
+function colVal(obj, field) {
+  for (const a of (SYNC_COLS[field] || [])) if (a in obj && obj[a] !== "") return obj[a];
+  return "";
+}
+
+async function runSync() {
+  const url = localStorage.getItem(SYNC_URL_KEY);
+  if (!url) return openSyncModal();
+  const btn = $("#syncBtn"), label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "同期中…"; }
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const objs = rowsToObjects(parseCSV(await res.text()));
+    let added = 0, skipped = 0;
+    objs.forEach((o) => {
+      const name = colVal(o, "name");
+      const email = colVal(o, "email");
+      const date = colVal(o, "date");
+      if (!name && !email) return;
+      const extId = colVal(o, "extId") || (email ? `${email}|${date}` : `${name}|${date}`);
+      const dupe = db.candidates.find((c) =>
+        (c.extId && c.extId === extId) ||
+        (email && c.email === email && c.source === "timerex"));
+      if (dupe) { skipped++; return; }
+      const c = {
+        id: uid(), name: name || email, kana: "", email, phone: colVal(o, "phone"),
+        currentJob: "", desiredJob: "", desiredSalary: "", skills: [],
+        company: "", position: "", advisorId: "",
+        source: "timerex", stage: "booked", extId,
+        createdAt: today(), updatedAt: today(), activities: [],
+      };
+      const note = colVal(o, "note");
+      logActivity(c, `TimeRexで予約${date ? `（${date}）` : ""}${note ? `／${note}` : ""}`, "create");
+      db.candidates.unshift(c);
+      added++;
+    });
+    saveDB(); render();
+    toast(`TimeRex同期：${added}件追加・${skipped}件スキップ`);
+  } catch (e) {
+    console.error("sync failed", e);
+    toast("同期に失敗：URL/ウェブ公開設定/CORSをご確認ください");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
+  }
+}
+
+function openSyncModal() {
+  const cur = localStorage.getItem(SYNC_URL_KEY) || "";
+  openModal(`
+    <div class="modal-head">
+      <div class="modal-title">TimeRex同期の設定</div>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="muted" style="margin-top:0">TimeRexの予約をためている<strong>GoogleスプレッドシートのCSV URL</strong>を貼り付けて「保存して同期」を押すと、未登録の予約を<strong>「予約」ステージ・流入「TimeRex予約」</strong>で取り込みます（重複は自動スキップ）。</p>
+      <div class="field full">
+        <label class="field-label">CSV URL（ウェブに公開 → カンマ区切り(.csv)）</label>
+        <input class="input" id="sync_url" value="${esc(cur)}" placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv&gid=0" />
+      </div>
+      <div class="section-label">想定する列（ヘッダー名）</div>
+      <p class="muted" style="font-size:12px">氏名 / メール / 予約日時（任意：電話・予約ID・メモ）。列名が多少違っても自動でマッチします。</p>
+    </div>
+    <div class="modal-foot">
+      <span></span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-primary" onclick="saveSyncUrlAndRun()">保存して同期</button>
+      </div>
+    </div>`);
+  setTimeout(() => $("#sync_url")?.focus(), 50);
+}
+function saveSyncUrlAndRun() {
+  const url = $("#sync_url").value.trim();
+  if (!url) { toast("CSV URLを入力してください"); return; }
+  localStorage.setItem(SYNC_URL_KEY, url);
+  closeModal();
+  runSync();
+}
+
+/* =========================================================
    イベント配線
    ========================================================= */
 $("#nav").addEventListener("click", (e) => {
@@ -591,6 +711,8 @@ $("#nav").addEventListener("click", (e) => {
   render();
 });
 $("#addCandidateBtn").addEventListener("click", () => openCandidateForm());
+$("#syncBtn").addEventListener("click", () => runSync());
+$("#syncCfgBtn")?.addEventListener("click", () => openSyncModal());
 $("#view").addEventListener("click", (e) => {
   if (e.target.id === "addAdvisorBtn") openAdvisorForm();
 });
@@ -609,7 +731,7 @@ $("#resetBtn").addEventListener("click", () => {
 });
 
 // 関数をグローバル公開（onclick属性から呼ぶため）
-Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, db });
+Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, saveSyncUrlAndRun, db });
 
 render();
 
