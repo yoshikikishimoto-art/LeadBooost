@@ -226,9 +226,11 @@ function renderCalendar() {
   const [y, m] = calMonth.split("-").map(Number);
   const startDow = new Date(y, m - 1, 1).getDay();
   const daysInMonth = new Date(y, m, 0).getDate();
+  // 面談日(スケジュール)があり、キャンセル/終了になっていない予約のみ表示
+  const onCal = (c) => c.scheduledAt && c.stage !== "closed";
   const byDate = {};
-  db.candidates.forEach((c) => { if (c.scheduledAt) (byDate[c.scheduledAt] = byDate[c.scheduledAt] || []).push(c); });
-  const monthCount = db.candidates.filter((c) => (c.scheduledAt || "").slice(0, 7) === calMonth).length;
+  db.candidates.forEach((c) => { if (onCal(c)) (byDate[c.scheduledAt] = byDate[c.scheduledAt] || []).push(c); });
+  const monthCount = db.candidates.filter((c) => onCal(c) && c.scheduledAt.slice(0, 7) === calMonth).length;
 
   const cells = [];
   for (let i = 0; i < startDow; i++) cells.push(null);
@@ -895,7 +897,7 @@ function importRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v7"; // ビルド識別（ページが最新JSかの確認用）
+const SYNC_BUILD = "sync-v8"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -918,7 +920,7 @@ async function runSync() {
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v7)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v8)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
