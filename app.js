@@ -17,6 +17,7 @@ const STAGES = [
 ];
 const STAGE_MAP = Object.fromEntries(STAGES.map((s) => [s.key, s]));
 const CLOSED = { key: "closed", label: "終了（辞退・見送り）", color: "var(--stage-closed)" };
+const REFERRAL = { key: "referral", label: "リファラル（面談設定前）", color: "var(--source-referral)" }; // 日程・担当未定の獲得段階
 
 /* ---------- 流入経路（リード獲得チャネル。db.sources で動的管理） ----------
    流入経路は4つ以上に増える前提で、設定画面（TimeRex設定）から
@@ -25,23 +26,28 @@ const SOURCE_PALETTE = ["#2563eb", "#12a150", "#d97706", "#7c3aed", "#0d9488", "
 
 // 既知の流入経路シート（gviz CSV・link-share済み）。アプリを開けば自動で設定される
 const gvizUrl = (id, gid = 0) => `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${gid}`;
+// kind: "timerex"=予約シート / "referral"=リファラル（日程・担当未定の獲得シート）
 const KNOWN_SHEETS = [
-  { key: "tezuna", label: "TEZUNA", id: "1p7K2Kt_KDirnknTtmVDFTnxfTXUTX2AjpkyVxkDu7T4" },
-  { key: "hado",   label: "HADO",   id: "1iBUQLTq8A7eiKSmCgq_ZXfWDCWBgrSvEA2iBU8tWFqY" },
-  { key: "rr",     label: "R&R",    id: "10J8E53wNX16vgx5_H6KWjl_VlvqH91wPAnmK5uY03PM" },
-  { key: "kanoa",  label: "KANOA",  id: "1x2cX9SWr7Q91nlf_BnL91Nu22NjTwLk1nAEXsdE-KFE" },
+  { key: "tezuna",   label: "TEZUNA", id: "1p7K2Kt_KDirnknTtmVDFTnxfTXUTX2AjpkyVxkDu7T4" },
+  { key: "hado",     label: "HADO",   id: "1iBUQLTq8A7eiKSmCgq_ZXfWDCWBgrSvEA2iBU8tWFqY" },
+  { key: "rr",       label: "R&R",    id: "10J8E53wNX16vgx5_H6KWjl_VlvqH91wPAnmK5uY03PM" },
+  { key: "kanoa",    label: "KANOA",  id: "1x2cX9SWr7Q91nlf_BnL91Nu22NjTwLk1nAEXsdE-KFE" },
+  { key: "referral", label: "リファラル", id: "1bLZZwJGvySZn4nlWYFYhIKiKVFSuN-ld94dy-GleCu8", gid: "2108869602", kind: "referral" },
 ];
 function defaultSources() {
-  return KNOWN_SHEETS.map((k, i) => ({ key: k.key, label: k.label, color: SOURCE_PALETTE[i % SOURCE_PALETTE.length], csvUrl: gvizUrl(k.id) }));
+  return KNOWN_SHEETS.map((k, i) => ({ key: k.key, label: k.label, color: SOURCE_PALETTE[i % SOURCE_PALETTE.length], csvUrl: gvizUrl(k.id, k.gid || 0), kind: k.kind || "timerex" }));
 }
-// 既存の db.sources に既知シートを補完（名前一致なら正しいURLに矯正・無ければ追加）
+// 既存の db.sources に既知シートを補完（名前一致なら正しいURL/種別に矯正・無ければ追加）
 function ensureKnownSheets() {
   db.sources = db.sources || [];
   let changed = false;
   defaultSources().forEach((ds) => {
     const ex = db.sources.find((x) => x.label === ds.label);
     if (!ex) { db.sources.push(ds); changed = true; }
-    else if (ex.csvUrl !== ds.csvUrl) { ex.csvUrl = ds.csvUrl; changed = true; } // typo等を正しいURLに矯正
+    else {
+      if (ex.csvUrl !== ds.csvUrl) { ex.csvUrl = ds.csvUrl; changed = true; } // typo等を正しいURLに矯正
+      if (ex.kind !== ds.kind) { ex.kind = ds.kind; changed = true; }
+    }
   });
   if (changed) saveDB();
 }
@@ -77,7 +83,7 @@ const initials = (name) => (name || "?").trim().slice(0, 2);
 function fmtDate(d) { if (!d) return "—"; const x = new Date(d); return `${x.getMonth() + 1}/${x.getDate()}`; }
 function daysSince(d) { if (!d) return 0; return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); }
 function advisorName(id) { const a = db.advisors.find((x) => x.id === id); return a ? a.name : "未割当"; }
-function stageOf(c) { return c.stage === "closed" ? CLOSED : (STAGE_MAP[c.stage] || STAGES[0]); }
+function stageOf(c) { return c.stage === "closed" ? CLOSED : c.stage === "referral" ? REFERRAL : (STAGE_MAP[c.stage] || STAGES[0]); }
 // 終了の場合は理由（事前キャンセル等）を反映したラベルを返す
 function stageLabelOf(c) { return (c.stage === "closed" && c.closeReason) ? `終了（${c.closeReason}）` : stageOf(c).label; }
 
@@ -106,6 +112,7 @@ let calView = "month";      // "month" | "week"
 const VIEW_META = {
   dashboard:  { title: "ダッシュボード", sub: "流入から入社・返金規定クリアまでの進捗を一目で確認" },
   calendar:   { title: "面談カレンダー", sub: "予約・面談の日程をカレンダーで確認し、着座を報告" },
+  referrals:  { title: "リファラル管理", sub: "日程・担当が未定のリファラル獲得を管理し、面談設定する" },
   pipeline:   { title: "パイプライン",  sub: "ドラッグで 予約→着座→…→入社 のステージを移動" },
   candidates: { title: "求職者一覧",    sub: "登録された求職者を検索・絞り込み" },
   advisors:   { title: "アドバイザー",  sub: "キャリアアドバイザーと担当状況・引き継ぎ" },
@@ -118,6 +125,7 @@ function render() {
   const view = $("#view");
   if (currentView === "dashboard") view.innerHTML = renderDashboard();
   else if (currentView === "calendar") { view.innerHTML = renderCalendar(); bindCalendar(); }
+  else if (currentView === "referrals") { view.innerHTML = renderReferrals(); bindReferrals(); }
   else if (currentView === "pipeline") { view.innerHTML = renderPipeline(); bindBoard(); }
   else if (currentView === "candidates") { view.innerHTML = renderCandidates(); bindCandidates(); }
   else if (currentView === "advisors") view.innerHTML = renderAdvisors();
@@ -316,6 +324,104 @@ function markSeated(id) {
   if (!c) return;
   moveStage(c, "seated");
   render();
+}
+
+/* ---------------------- リファラル管理 ---------------------- */
+function confChip(v) {
+  const c = String(v || "").trim();
+  const cls = /高/.test(c) ? "pos" : /低/.test(c) ? "neg" : "";
+  return c ? `<span class="conf ${cls}">${esc(c)}</span>` : `<span class="muted">—</span>`;
+}
+function renderReferrals() {
+  const list = db.candidates.filter((c) => c.stage === "referral")
+    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return `
+    <div class="filter-row">
+      <span class="muted">面談設定が必要なリファラル <strong>${list.length}</strong> 件</span>
+      <button class="btn btn-outline btn-sm" id="refSyncBtn" style="margin-left:auto">⟳ リファラル取り込み</button>
+    </div>
+    <div class="card table-wrap">
+      <table class="tbl">
+        <thead><tr>
+          <th>候補者</th><th>紹介者</th><th>希望職種</th><th>確度</th><th>ネクストアクション</th><th>担当者</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${list.length ? list.map(rowReferral).join("") : `<tr><td colspan="7"><div class="empty">面談設定待ちのリファラルはありません。「リファラル取り込み」で同期してください</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
+}
+function rowReferral(c) {
+  return `
+    <tr data-id="${c.id}">
+      <td><div class="cell-name">
+        <span class="avatar">${esc(initials(c.name))}</span>
+        <div><div class="name">${esc(c.name)}</div><div class="sub muted">${esc(c.referralNote || "")}</div></div>
+      </div></td>
+      <td>${esc(c.referrer || "—")}<div class="sub muted" style="font-size:12px">${esc(c.referrerAttr || "")}</div></td>
+      <td>${esc(c.desiredJob || "—")}</td>
+      <td>${confChip(c.confidence)}</td>
+      <td>${esc(c.nextAction || "—")}</td>
+      <td>${c.advisorId ? esc(advisorName(c.advisorId)) : `<span class="muted">未割当</span>`}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-primary btn-sm" data-setup="${c.id}">面談設定</button>
+      </td>
+    </tr>`;
+}
+function bindReferrals() {
+  $("#refSyncBtn")?.addEventListener("click", () => runSync());
+  $$(".tbl tbody tr[data-id] [data-setup]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openMeetingSetup(b.dataset.setup); }));
+  $$(".tbl tbody tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openMeetingSetup(tr.dataset.id)));
+}
+// 面談設定：担当者と日程を決めて 予約 ステージへ
+function openMeetingSetup(id) {
+  const c = db.candidates.find((x) => x.id === id);
+  if (!c) return;
+  const advOpts = db.advisors.map((a) => `<option value="${a.id}" ${c.advisorId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
+  openModal(`
+    <div class="modal-head"><div class="modal-title">面談設定：${esc(c.name)}</div><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="margin-top:0">紹介者：${esc(c.referrer || "—")}　／　希望職種：${esc(c.desiredJob || "—")}${c.referralNote ? `<br>補足：${esc(c.referralNote)}` : ""}</p>
+      <div class="form-grid">
+        <div class="field"><label class="field-label">面談日 *</label><input class="input" id="ms_date" type="date" value="${today()}" /></div>
+        <div class="field"><label class="field-label">時刻</label><input class="input" id="ms_time" type="time" value="" /></div>
+        <div class="field"><label class="field-label">担当者 *</label>
+          <div class="select-wrap"><select class="select" id="ms_adv"><option value="">未割当</option>${advOpts}</select></div>
+        </div>
+        <div class="field"><label class="field-label">希望職種</label><input class="input" id="ms_job" value="${esc(c.desiredJob || "")}" /></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger btn-sm" onclick="closeReferral('${c.id}')">見送り</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-primary" onclick="saveMeetingSetup('${c.id}')">面談を設定（予約へ）</button>
+      </div>
+    </div>`);
+  setTimeout(() => $("#ms_date")?.focus(), 50);
+}
+function saveMeetingSetup(id) {
+  const c = db.candidates.find((x) => x.id === id);
+  if (!c) return;
+  const date = $("#ms_date").value;
+  if (!date) { toast("面談日を入力してください"); return; }
+  const time = $("#ms_time").value;
+  const adv = $("#ms_adv").value;
+  c.advisorId = adv;
+  c.desiredJob = $("#ms_job").value.trim();
+  c.scheduledAt = date;
+  c.scheduledText = `${date}${time ? " " + time : ""}`;
+  c.stage = "booked";
+  logActivity(c, `面談設定（${date}${time ? " " + time : ""}・担当:${adv ? advisorName(adv) : "未割当"}）でリファラル→予約へ`, "stage");
+  saveDB(); closeModal(); render();
+  toast(`${c.name} の面談を設定しました（予約へ）`);
+}
+function closeReferral(id) {
+  const c = db.candidates.find((x) => x.id === id);
+  if (!c) return;
+  c.stage = "closed"; c.closeReason = "見送り"; c.updatedAt = today();
+  logActivity(c, "リファラルを見送り", "stage");
+  saveDB(); closeModal(); render(); toast(`${c.name} を見送りにしました`);
 }
 
 /* ---------------------- パイプライン（カンバン） ---------------------- */
@@ -821,6 +927,19 @@ const SYNC_COLS = {
   status: ["ステータス", "状態", "予約状態", "予約ステータス", "status", "Status"],
   advisor:["参加メンバー", "担当者", "担当", "アサイン", "メンバー"],
 };
+// リファラルシート用の列（日程・担当未定の獲得シート）
+const REFERRAL_COLS = {
+  name:        ["候補者名", "氏名", "名前", "お名前"],
+  referrer:    ["紹介者"],
+  desiredJob:  ["希望職種", "希望"],
+  confidence:  ["確度"],
+  nextAction:  ["ネクストアクション", "次のアクション"],
+  note:        ["その他補足情報", "補足", "備考", "メモ", "コメント"],
+  sender:      ["送信者"],
+  timestamp:   ["タイムスタンプ", "timestamp"],
+  referrerAttr:["紹介者属性"],
+  advisor:     ["面談担当者", "担当者", "担当"],
+};
 const CANCEL_RE = /キャンセル|取消|取り消|cancel|declin|no[\s-]?show|不参加|辞退/i;
 const RESCHEDULED_RE = /日程変更|リスケ|reschedul/i; // 新しい確定行に置き換わった古い行 → 取り込まない
 
@@ -866,8 +985,8 @@ function rowsToObjects(rows) {
     .filter((r) => r.some((c) => (c || "").trim() !== ""))
     .map((r) => { const o = {}; headers.forEach((h, i) => (o[h] = (r[i] || "").trim())); return o; });
 }
-function colVal(obj, field) {
-  const aliases = SYNC_COLS[field] || [];
+function pickCol(obj, aliases) {
+  aliases = aliases || [];
   // 1) ヘッダー名の完全一致を優先（正常なシート）
   for (const a of aliases) if (a in obj && obj[a] !== "") return obj[a];
   // 2) 「列名 + スペース + データ連結」の壊れたヘッダーにも対応（前方一致）
@@ -876,6 +995,10 @@ function colVal(obj, field) {
     if (k.startsWith(a + " ") && obj[k] !== "") return obj[k];
   }
   return "";
+}
+function colRef(obj, field) { return pickCol(obj, REFERRAL_COLS[field]); }
+function colVal(obj, field) {
+  return pickCol(obj, SYNC_COLS[field]);
 }
 
 // 旧バージョンの単一URLを timerex 経路へ移行（既存ユーザーの設定を引き継ぐ）
@@ -958,7 +1081,31 @@ function importRow(o, src) {
   return "added";
 }
 
-const SYNC_BUILD = "sync-v12"; // ビルド識別（ページが最新JSかの確認用）
+// リファラル行を取り込む（日程・担当未定の「リファラル」段階で登録）
+function importReferralRow(o, src) {
+  const name = colRef(o, "name");
+  if (!name) return "empty";
+  const ts = colRef(o, "timestamp"), sender = colRef(o, "sender");
+  const extId = `${src.key}|${name}|${ts}|${sender}`;
+  if (db.candidates.find((c) => c.extId === extId)) return "dup";
+  const advNm = colRef(o, "advisor");
+  const c = {
+    id: uid(), name, kana: "", email: "", phone: "",
+    currentJob: "", desiredJob: colRef(o, "desiredJob"), desiredSalary: "", skills: [],
+    company: "", position: "", advisorId: advNm ? findOrCreateAdvisor(advNm) : "",
+    source: src.key, extId, stage: "referral",
+    scheduledAt: "", scheduledText: "",
+    referrer: colRef(o, "referrer"), confidence: colRef(o, "confidence"),
+    nextAction: colRef(o, "nextAction"), sender, referrerAttr: colRef(o, "referrerAttr"),
+    referralNote: colRef(o, "note"),
+    createdAt: parseSchedDate(ts) || today(), updatedAt: today(), activities: [],
+  };
+  logActivity(c, `リファラル獲得（紹介者:${colRef(o, "referrer") || "—"}）${c.nextAction ? `／次:${c.nextAction}` : ""}`, "create");
+  db.candidates.unshift(c);
+  return "added";
+}
+
+const SYNC_BUILD = "sync-v13"; // ビルド識別（ページが最新JSかの確認用）
 async function runSync() {
   const srcs = sources().filter((s) => s.csvUrl);
   console.log(`[${SYNC_BUILD}] runSync 開始 / today=${today()} / 直近${db.syncWithinDays}日（下限=${db.syncWithinDays ? daysAgoISO(Number(db.syncWithinDays)) : "なし"}） / 対象経路=${srcs.length}`, srcs.map((s) => ({ label: s.label, url: s.csvUrl })));
@@ -974,14 +1121,15 @@ async function runSync() {
       if (!res.ok) throw new Error("HTTP " + res.status);
       const objs = rowsToObjects(parseCSV(await res.text()));
       const per = { added: 0, cancelled: 0, dup: 0, old: 0, reschedule: 0, empty: 0 };
-      objs.forEach((o) => { const r = importRow(o, s); t[r]++; per[r]++; });
+      const imp = s.kind === "referral" ? importReferralRow : importRow;
+      objs.forEach((o) => { const r = imp(o, s); t[r]++; per[r]++; });
       console.log(`[${SYNC_BUILD}] 「${s.label}」: ${objs.length}行 →`, per);
       results.push(`${s.label}+${per.added + per.cancelled}`);
     } catch (e) { console.error(`[${SYNC_BUILD}] 取得失敗:`, s.label, e); failed++; results.push(`${s.label}✗失敗`); }
   }
   saveDB(); render();
   const skipped = t.dup + t.old + t.reschedule + t.empty;
-  let msg = `同期(v12)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
+  let msg = `同期(v13)｜${results.join(" / ")}｜計${t.added + t.cancelled}件追加・スキップ${skipped}（期間外${t.old}・重複${t.dup}・変更${t.reschedule}・空${t.empty}）`;
   console.log(`[${SYNC_BUILD}] 完了:`, { ...t, failed, 求職者総数: db.candidates.length });
   toast(msg);
   if (btn) { btn.disabled = false; btn.textContent = label || "⟳ TimeRex同期"; }
@@ -1083,7 +1231,7 @@ $("#resetBtn").addEventListener("click", () => {
 });
 
 // 関数をグローバル公開（onclick属性から呼ぶため）
-Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, openHandoff, runHandoff, db });
+Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, openHandoff, runHandoff, openMeetingSetup, saveMeetingSetup, closeReferral, db });
 
 render();
 
