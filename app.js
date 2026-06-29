@@ -36,14 +36,10 @@ const REPORT_TYPES = [
 const APP_STATUSES = ["提案", "応諾", "書類回収", "日程回収", "エントリー", "一次面接", "二次面接", "最終面接", "内定", "内定承諾", "入社", "見送り"];
 const CONFIDENCE = [{ key: "A", label: "A（高）", p: 0.8 }, { key: "B", label: "B（中）", p: 0.5 }, { key: "C", label: "C（低）", p: 0.2 }]; // 旧確度（移行用に残置）
 function confP(k) { const c = CONFIDENCE.find((x) => x.key === k); return c ? c.p : 0.5; }
-// 読みの係数：内定確率(%) × 意向度(%)。★読みの算出式を変える場合はここを変更
-function yomiRate(a) { return ((Number(a.offerProb) || 0) / 100) * ((Number(a.intent) || 0) / 100); }
-// 読み額（企業単体）：内定承諾/入社=確定(満額)、見送り/返金=0、提案中=想定売上×内定確率×意向度
+// 読み額（企業単体）＝想定売上そのまま（見送り/返金=0）。内定確率・意向度では変動させない
 function appYomi(a) {
-  const fee = Number(a.fee) || 0;
   if (a.status === "見送り" || a.invoiceStatus === "返金") return 0;
-  if (["内定承諾", "入社"].includes(a.status)) return fee;
-  return Math.round(fee * yomiRate(a));
+  return Number(a.fee) || 0;
 }
 /* 候補者は最終的に1社にしか入社しないため、読みは「総額」ではなく候補者ごとに集約する。
    集約方法：平均 / 最大(積極的) / 最小(消極的)。 */
@@ -119,11 +115,10 @@ function salesRecognized(a) { return RECOGNIZED_SET.includes(a.status) ? (Number
 // 早期退職などの返金額（税抜）。返金の計上月は refundDate（無ければ acceptMonth）
 function salesRefund(a) { return Number(a.refundAmount) || 0; }
 function refundMonth(a) { return monthOf(a.refundDate) || a.acceptMonth || ""; }
-// 着地見込み：承諾以上=確定fee、提案〜最終面接=fee×確度、見送り/返金=0
+// 着地見込み：見送り/返金=0、それ以外=想定売上そのまま
 function salesForecast(a) {
   if (a.status === "見送り" || a.invoiceStatus === "返金") return 0;
-  if (RECOGNIZED_SET.includes(a.status)) return Number(a.fee) || 0;
-  return Math.round((Number(a.fee) || 0) * yomiRate(a));
+  return Number(a.fee) || 0;
 }
 // 売上関連フィールドの自動補完（未設定のみ補完し、手修正は尊重）
 function syncAppSales(c, a) {
@@ -644,7 +639,7 @@ function ensureApplication(c, name, status) {
     if (!a.fee && fee) { a.fee = fee; a.feeInclTax = feeInclTax; } // 金額未入力なら自動補完
   } else {
     a = {
-      id: uid(), company: name, status, fee, feeInclTax, refundAmount: 0, refundDate: "", offerProb: 50, intent: 50,
+      id: uid(), company: name, status, fee, feeInclTax, refundAmount: 0, refundDate: "",
       segment: "CA", ownListing: true, partner: "", raName: "", via: "", billTo: "",
       invoiceStatus: "未請求", acceptMonth: "", acceptDate: "", invoiceMonth: "", dueMonth: "",
       paidAt: "", paidMonth: "", paidAmount: 0, createdAt: today(), updatedAt: today(),
@@ -1140,14 +1135,12 @@ function renderApplications(c) {
       <input class="input app-f" data-f="company" value="${esc(a.company || "")}" placeholder="企業名" />
       <div class="select-wrap"><select class="select app-f" data-f="status">${statusOpt(a.status)}</select></div>
       <input class="input app-f" data-f="fee" type="number" min="0" step="10000" value="${Number(a.fee) || 0}" placeholder="想定売上" />
-      <input class="input app-f" data-f="offerProb" type="number" min="0" max="100" step="5" value="${Number(a.offerProb) || 0}" title="内定確率%" />
-      <input class="input app-f" data-f="intent" type="number" min="0" max="100" step="5" value="${Number(a.intent) || 0}" title="意向度%（いくかどうか）" />
       <span class="app-yomi">${fmtYen(appYomi(a))}</span>
       <button class="btn btn-danger btn-sm" data-appdel="${a.id}" title="削除">×</button>
     </div>`).join("");
   return `
     <div class="app-list">
-      <div class="app-head"><span>企業</span><span>選考ステータス</span><span>想定売上</span><span>内定確率%</span><span>意向度%</span><span>読み額</span><span></span></div>
+      <div class="app-head"><span>企業</span><span>選考ステータス</span><span>想定売上</span><span>読み額</span><span></span></div>
       ${rows}
       ${apps.length ? "" : `<div class="empty" style="padding:var(--sp-4)">提案企業がありません。「＋企業を追加」から登録してください</div>`}
     </div>
@@ -1186,13 +1179,13 @@ function addBulkApplications(candId) {
 }
 function addApplication(candId) {
   const c = db.candidates.find((x) => x.id === candId); if (!c) return;
-  (c.applications = c.applications || []).push({ id: uid(), company: "", status: "提案", fee: 0, feeInclTax: 0, refundAmount: 0, refundDate: "", offerProb: 50, intent: 50, segment: "未分類", ownListing: false, partner: "", raName: "", via: "", billTo: "", invoiceStatus: "未請求", acceptMonth: "", acceptDate: "", invoiceMonth: "", dueMonth: "", paidAt: "", paidMonth: "", paidAmount: 0, createdAt: today(), updatedAt: today() });
+  (c.applications = c.applications || []).push({ id: uid(), company: "", status: "提案", fee: 0, feeInclTax: 0, refundAmount: 0, refundDate: "", segment: "未分類", ownListing: false, partner: "", raName: "", via: "", billTo: "", invoiceStatus: "未請求", acceptMonth: "", acceptDate: "", invoiceMonth: "", dueMonth: "", paidAt: "", paidMonth: "", paidAmount: 0, createdAt: today(), updatedAt: today() });
   saveDB(); openDetail(candId);
 }
 function updateApplication(candId, appId, field, value) {
   const c = db.candidates.find((x) => x.id === candId); if (!c) return;
   const a = (c.applications || []).find((x) => x.id === appId); if (!a) return;
-  a[field] = ["fee", "offerProb", "intent"].includes(field) ? (Number(value) || 0) : value;
+  a[field] = field === "fee" ? (Number(value) || 0) : value;
   a.updatedAt = today(); c.updatedAt = today();
   if (field === "status") { logActivity(c, `${a.company || "企業"}：選考を「${value}」に更新`, "stage"); syncAppSales(c, a); }
   saveDB(); openDetail(candId);
@@ -1262,7 +1255,7 @@ function renderYomi() {
           ${rows.length ? rows.map((c) => {
             const won = candConfirmedApp(c); const lead = candLeadApp(c); const ip = candInProgApps(c);
             const status = won ? `<span class="badge" data-stage="${won.status === "入社" ? "join" : "accept"}"><span class="dot"></span>確定:${esc(won.status)}</span>` : `<span class="badge" data-stage="screen"><span class="dot"></span>進行中 ${ip.length}社</span>`;
-            const leadTxt = lead ? `${esc(lead.company || "—")}${won ? "" : `（内定${Number(lead.offerProb) || 0}%×意向${Number(lead.intent) || 0}%）`}` : "—";
+            const leadTxt = lead ? esc(lead.company || "—") : "—";
             return `
             <tr data-id="${c.id}">
               <td>${esc(c.name)}</td>
@@ -1823,9 +1816,6 @@ function colVal(obj, field) {
       // 売上拡張フィールドの後付け
       if (a.segment == null) { a.segment = "未分類"; changed = true; }
       if (a.feeInclTax == null) { a.feeInclTax = Number(a.fee) || 0; changed = true; }
-      // 旧確度(conf) → 内定確率(offerProb)・意向度(intent) へ移行
-      if (a.offerProb == null) { a.offerProb = Math.round(confP(a.conf) * 100); changed = true; }
-      if (a.intent == null) { a.intent = 100; changed = true; }
       ["acceptMonth", "acceptDate", "invoiceMonth", "dueMonth", "paidAt", "paidMonth", "refundDate", "partner", "raName", "via", "billTo"].forEach((k) => { if (a[k] == null) { a[k] = ""; changed = true; } });
       if (a.refundAmount == null) { a.refundAmount = 0; changed = true; }
       if (a.ownListing == null) { a.ownListing = false; changed = true; }
@@ -2200,13 +2190,13 @@ function seedData() {
       empType: "中途", applications: [{ id: "ap3", company: "株式会社ネクストワン", status: "内定承諾", fee: 700000, feeInclTax: 770000, segment: "PCA", ownListing: false, partner: "送客パートナーA", conf: "A", acceptMonth: "2026-06", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 700000, createdAt: "2026-06-01", updatedAt: "2026-06-22" }] }),
     mk({ id: "c4", name: "高橋 葵", kana: "タカハシ アオイ", advisorId: "adv3", source: "referral", stage: "offer", company: "クラウドベース株式会社", position: "インフラエンジニア", currentJob: "オンプレ運用", desiredJob: "クラウドインフラ", desiredSalary: "600万円", skills: ["AWS", "Terraform", "Kubernetes"], updatedAt: "2026-06-24",
       activities: [{ id: "a6", date: "2026-06-24", type: "stage", text: "ステージを「選考」→「内定」に変更" }],
-      empType: "中途", applications: [{ id: "ap4", company: "クラウドベース株式会社", status: "内定", fee: 650000, offerProb: 80, intent: 80, acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-10", updatedAt: "2026-06-24" }] }),
+      empType: "中途", applications: [{ id: "ap4", company: "クラウドベース株式会社", status: "内定", fee: 650000, acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-10", updatedAt: "2026-06-24" }] }),
     mk({ id: "c5", name: "伊藤 直樹", kana: "イトウ ナオキ", advisorId: "adv2", source: "timerex", stage: "screen", company: "株式会社データワークス", position: "データエンジニア", currentJob: "アナリスト", desiredJob: "データ基盤構築", desiredSalary: "580万円", skills: ["Python", "SQL", "BigQuery"], updatedAt: "2026-06-25",
       activities: [{ id: "a7", date: "2026-06-25", type: "note", text: "一次面接通過。来週二次面接" }],
-      empType: "中途", applications: [{ id: "ap5", company: "株式会社データワークス", status: "一次面接", fee: 600000, offerProb: 40, intent: 70, acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-15", updatedAt: "2026-06-25" }] }),
+      empType: "中途", applications: [{ id: "ap5", company: "株式会社データワークス", status: "一次面接", fee: 600000, acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-15", updatedAt: "2026-06-25" }] }),
     mk({ id: "c6", name: "渡辺 美穂", kana: "ワタナベ ミホ", advisorId: "adv3", source: "referral", stage: "proposal", company: "株式会社UXデザイン", position: "UIデザイナー", currentJob: "制作会社デザイナー", desiredJob: "プロダクトデザイン", desiredSalary: "520万円", expectedSalary: 5200000, skills: ["Figma", "UIデザイン"], updatedAt: "2026-06-26",
       activities: [{ id: "a8", date: "2026-06-26", type: "stage", text: "ステージを「初回面談」→「企業提案」に変更" }, { id: "a8b", date: "2026-06-26", type: "note", text: "2社を提案。来週、推薦書を送付予定" }],
-      empType: "中途", applications: [{ id: "ap6", company: "株式会社UXデザイン", status: "提案", fee: 520000, offerProb: 30, intent: 60, acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-26", updatedAt: "2026-06-26" }] }),
+      empType: "中途", applications: [{ id: "ap6", company: "株式会社UXデザイン", status: "提案", fee: 520000, acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-26", updatedAt: "2026-06-26" }] }),
     mk({ id: "c7", name: "中村 翔", kana: "ナカムラ ショウ", advisorId: "adv1", source: "timerex", stage: "meeting", currentJob: "新卒3年目 営業", desiredJob: "エンジニア転職", desiredSalary: "450万円", skills: ["独学でProgate完了"], updatedAt: "2026-06-27",
       activities: [{ id: "a9", date: "2026-06-27", type: "stage", text: "ステージを「着座」→「初回面談」に変更" }, { id: "a9b", date: "2026-06-27", type: "note", text: "初回面談実施。キャリアの方向性をヒアリング" }] }),
     mk({ id: "c8", name: "小林 由美", kana: "コバヤシ ユミ", advisorId: "adv2", source: "referral", stage: "seated", currentJob: "経理5年", desiredJob: "コーポレートIT", desiredSalary: "500万円", skills: ["Excel", "業務改善"], updatedAt: "2026-06-28",
