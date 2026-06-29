@@ -43,7 +43,9 @@
   --stage-offer:    #d98309;  /* 内定 */
   --stage-accept:   #0d9488;  /* 内定承諾 */
   --stage-join:     #15a06a;  /* 入社 */
-  --stage-refund:   #047857;  /* 返金規定クリア */
+  --stage-pickup:   #8b5cf6;  /* 企業ピックアップ */
+  --stage-left:     #b91c1c;  /* 退社（早期退社） */
+  --stage-refund:   #047857;  /* 返金規定クリア（旧） */
   --stage-closed:   #94a3b8;  /* 終了 */
 
   /* 流入経路の色 */
@@ -206,6 +208,8 @@ button { font-family: inherit; cursor: pointer; }
 .badge[data-stage="offer"]    { color: var(--stage-offer);    background: color-mix(in srgb, var(--stage-offer) 14%, #fff); }
 .badge[data-stage="accept"]   { color: var(--stage-accept);   background: color-mix(in srgb, var(--stage-accept) 14%, #fff); }
 .badge[data-stage="join"]     { color: var(--stage-join);     background: color-mix(in srgb, var(--stage-join) 14%, #fff); }
+.badge[data-stage="pickup"]   { color: var(--stage-pickup);   background: color-mix(in srgb, var(--stage-pickup) 12%, #fff); }
+.badge[data-stage="left"]     { color: var(--stage-left);     background: color-mix(in srgb, var(--stage-left) 12%, #fff); }
 .badge[data-stage="refund"]   { color: var(--stage-refund);   background: color-mix(in srgb, var(--stage-refund) 14%, #fff); }
 .badge[data-stage="closed"]   { color: var(--stage-closed);   background: color-mix(in srgb, var(--stage-closed) 16%, #fff); }
 
@@ -238,6 +242,10 @@ button { font-family: inherit; cursor: pointer; }
 .funnel-bar { height: 26px; border-radius: var(--r-sm); background: var(--bg-subtle); overflow: hidden; }
 .funnel-fill { height: 100%; border-radius: var(--r-sm); min-width: 2px; transition: width .5s cubic-bezier(.2,.7,.2,1); }
 .funnel-count { font-size: 13px; font-weight: 700; text-align: right; }
+.month-nav { display: inline-flex; align-items: center; gap: 8px; }
+.month-label { font-size: 16px; font-weight: 700; min-width: 96px; text-align: center; }
+.pos { color: var(--positive); }
+.neg { color: var(--negative); }
 .src-note { font-size: 12px; color: var(--text-mute); margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--line-soft); }
 .src-dl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: var(--sp-3); font-size: 12px; }
 
