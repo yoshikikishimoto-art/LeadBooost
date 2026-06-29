@@ -34,10 +34,42 @@ const REPORT_TYPES = [
 
 /* ---------- 選考企業（候補者ごとに複数）／売上・読み票 ---------- */
 const APP_STATUSES = ["提案", "応諾", "書類回収", "日程回収", "エントリー", "一次面接", "二次面接", "最終面接", "内定", "内定承諾", "入社", "見送り"];
-const CONFIDENCE = [{ key: "A", label: "A（高）", p: 0.8 }, { key: "B", label: "B（中）", p: 0.5 }, { key: "C", label: "C（低）", p: 0.2 }];
+const CONFIDENCE = [{ key: "A", label: "A（高）", p: 0.8 }, { key: "B", label: "B（中）", p: 0.5 }, { key: "C", label: "C（低）", p: 0.2 }]; // 旧確度（移行用に残置）
 function confP(k) { const c = CONFIDENCE.find((x) => x.key === k); return c ? c.p : 0.5; }
-// 読み額：入社=確定(満額)、見送り=0、それ以外=想定売上×確度
-function appYomi(a) { const fee = Number(a.fee) || 0; return a.status === "入社" ? fee : a.status === "見送り" ? 0 : Math.round(fee * confP(a.conf)); }
+// 読みの係数：内定確率(%) × 意向度(%)。★読みの算出式を変える場合はここを変更
+function yomiRate(a) { return ((Number(a.offerProb) || 0) / 100) * ((Number(a.intent) || 0) / 100); }
+// 読み額（企業単体）：内定承諾/入社=確定(満額)、見送り/返金=0、提案中=想定売上×内定確率×意向度
+function appYomi(a) {
+  const fee = Number(a.fee) || 0;
+  if (a.status === "見送り" || a.invoiceStatus === "返金") return 0;
+  if (["内定承諾", "入社"].includes(a.status)) return fee;
+  return Math.round(fee * yomiRate(a));
+}
+/* 候補者は最終的に1社にしか入社しないため、読みは「総額」ではなく候補者ごとに集約する。
+   集約方法：平均 / 最大(積極的) / 最小(消極的)。 */
+const YOMI_MODES = [{ key: "max", label: "最大（積極的）" }, { key: "min", label: "最小（消極的）" }];
+function candConfirmedApp(c) { return (c.applications || []).find((a) => ["内定承諾", "入社"].includes(a.status) && a.invoiceStatus !== "返金"); }
+function candInProgApps(c) { return (c.applications || []).filter((a) => !["内定承諾", "入社", "見送り"].includes(a.status) && a.invoiceStatus !== "返金"); }
+function candLeadApp(c) { // 代表企業：確定 or 最有力（単体読み最大）
+  const won = candConfirmedApp(c); if (won) return won;
+  const ip = candInProgApps(c); if (!ip.length) return null;
+  return ip.reduce((best, a) => (appYomi(a) > appYomi(best) ? a : best), ip[0]);
+}
+// 候補者単位の読み（1人1社前提で集約）。確定があればその企業の満額
+function candidateYomi(c, mode) {
+  const won = candConfirmedApp(c); if (won) return Number(won.fee) || 0;
+  const vals = candInProgApps(c).map(appYomi); if (!vals.length) return 0;
+  if (mode === "max") return Math.max(...vals);
+  if (mode === "min") return Math.min(...vals);
+  return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+}
+// 名前の横に出す算出読み額（確定はその額、進行中は 最小〜最大）
+function candidateYomiLabel(c) {
+  if (candConfirmedApp(c)) return `読み（確定） ${fmtYen(candidateYomi(c, "max"))}`;
+  const mx = candidateYomi(c, "max"), mn = candidateYomi(c, "min");
+  if (!mx && !mn) return "読み —";
+  return mn === mx ? `読み ${fmtYen(mx)}` : `読み ${fmtYen(mn)}〜${fmtYen(mx)}`;
+}
 const fmtYen = (n) => `¥${(Number(n) || 0).toLocaleString("en-US")}`;
 // 選考中（どこかしら選考に乗っている）＝一次面接以上の選考企業を持つ
 const SELECTION_SET = ["一次面接", "二次面接", "最終面接", "内定", "内定承諾", "入社"];
@@ -91,7 +123,7 @@ function refundMonth(a) { return monthOf(a.refundDate) || a.acceptMonth || ""; }
 function salesForecast(a) {
   if (a.status === "見送り" || a.invoiceStatus === "返金") return 0;
   if (RECOGNIZED_SET.includes(a.status)) return Number(a.fee) || 0;
-  return Math.round((Number(a.fee) || 0) * confP(a.conf));
+  return Math.round((Number(a.fee) || 0) * yomiRate(a));
 }
 // 売上関連フィールドの自動補完（未設定のみ補完し、手修正は尊重）
 function syncAppSales(c, a) {
@@ -140,7 +172,7 @@ function sources() { return (db.sources && db.sources.length) ? db.sources : (db
 function sourceOf(c) { return sources().find((s) => s.key === c.source) || null; }
 
 /* ---------- ストレージ ---------- */
-const DB_KEY = "talentflow.db.v2";
+const DB_KEY = "talentflow.db.v3"; // v3: 設計用にデータクリア（旧v2は読み込まない＝自動初期化）
 
 function loadDB() {
   try {
@@ -151,7 +183,9 @@ function loadDB() {
 }
 function saveDB() { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
 
-let db = loadDB() || seedData();
+// 設計フェーズのため既定は空（サンプルは「サンプル投入」ボタンで投入）
+function emptyDB() { return { advisors: [], candidates: [], companies: [], targets: {}, sources: defaultSources() }; }
+let db = loadDB() || emptyDB();
 if (!db.sources || !db.sources.length) db.sources = defaultSources();
 if (db.syncWithinDays == null) db.syncWithinDays = 14; // 取り込みは直近この日数の予約のみ（0=全期間）
 ensureKnownSheets(); // 既知4シートのURLを自動補完
@@ -191,6 +225,7 @@ let filters = { q: "", stage: "", source: "", advisor: "" };
 let calDate = today();      // 面談カレンダーの基準日 YYYY-MM-DD
 let calView = "month";      // "month" | "week"
 let yomiFilter = "all";     // 読み票テーブルの絞り込み
+let yomiMode = "max";       // 読みの集約方法（max/min）
 let salesMonth = today().slice(0, 7); // 売上管理の対象月 YYYY-MM
 let salesPayFilter = "all"; // 着金管理テーブルの絞り込み
 let salesSeg = "all"; // 売上管理の事業フィルタ（all/CA/PCA/PCAシェア/未分類）
@@ -609,7 +644,7 @@ function ensureApplication(c, name, status) {
     if (!a.fee && fee) { a.fee = fee; a.feeInclTax = feeInclTax; } // 金額未入力なら自動補完
   } else {
     a = {
-      id: uid(), company: name, status, fee, feeInclTax, refundAmount: 0, refundDate: "", conf: "B",
+      id: uid(), company: name, status, fee, feeInclTax, refundAmount: 0, refundDate: "", offerProb: 50, intent: 50,
       segment: "CA", ownListing: true, partner: "", raName: "", via: "", billTo: "",
       invoiceStatus: "未請求", acceptMonth: "", acceptDate: "", invoiceMonth: "", dueMonth: "",
       paidAt: "", paidMonth: "", paidAmount: 0, createdAt: today(), updatedAt: today(),
@@ -1037,7 +1072,7 @@ function openDetail(id) {
       <div class="detail-head">
         <span class="avatar">${esc(initials(c.name))}</span>
         <div>
-          <div class="detail-name">${esc(c.name)} <span class="badge" data-stage="${s.key}" style="margin-left:6px"><span class="dot"></span>${esc(stageLabelOf(c))}</span></div>
+          <div class="detail-name">${esc(c.name)} <span class="badge" data-stage="${s.key}" style="margin-left:6px"><span class="dot"></span>${esc(stageLabelOf(c))}</span> <span class="yomi-pill">${esc(candidateYomiLabel(c))}</span></div>
           <div class="detail-meta">${esc(c.kana || "")}　担当：${esc(advisorName(c.advisorId))}</div>
         </div>
       </div>
@@ -1100,35 +1135,64 @@ function openDetail(id) {
 function renderApplications(c) {
   const apps = c.applications || [];
   const statusOpt = (cur) => APP_STATUSES.map((s) => `<option ${s === cur ? "selected" : ""}>${s}</option>`).join("");
-  const confOpt = (cur) => CONFIDENCE.map((x) => `<option value="${x.key}" ${x.key === cur ? "selected" : ""}>${x.label}</option>`).join("");
   const rows = apps.map((a) => `
     <div class="app-row" data-app="${a.id}">
       <input class="input app-f" data-f="company" value="${esc(a.company || "")}" placeholder="企業名" />
       <div class="select-wrap"><select class="select app-f" data-f="status">${statusOpt(a.status)}</select></div>
       <input class="input app-f" data-f="fee" type="number" min="0" step="10000" value="${Number(a.fee) || 0}" placeholder="想定売上" />
-      <div class="select-wrap"><select class="select app-f" data-f="conf">${confOpt(a.conf)}</select></div>
+      <input class="input app-f" data-f="offerProb" type="number" min="0" max="100" step="5" value="${Number(a.offerProb) || 0}" title="内定確率%" />
+      <input class="input app-f" data-f="intent" type="number" min="0" max="100" step="5" value="${Number(a.intent) || 0}" title="意向度%（いくかどうか）" />
       <span class="app-yomi">${fmtYen(appYomi(a))}</span>
       <button class="btn btn-danger btn-sm" data-appdel="${a.id}" title="削除">×</button>
     </div>`).join("");
-  const totalFee = apps.filter((a) => a.status !== "見送り").reduce((s, a) => s + (Number(a.fee) || 0), 0);
-  const totalYomi = apps.reduce((s, a) => s + appYomi(a), 0);
   return `
     <div class="app-list">
-      <div class="app-head"><span>企業</span><span>選考ステータス</span><span>想定売上</span><span>確度</span><span>読み額</span><span></span></div>
+      <div class="app-head"><span>企業</span><span>選考ステータス</span><span>想定売上</span><span>内定確率%</span><span>意向度%</span><span>読み額</span><span></span></div>
       ${rows}
-      ${apps.length ? `<div class="app-foot">想定売上計 ${fmtYen(totalFee)}　／　読み額計 <strong class="pos">${fmtYen(totalYomi)}</strong></div>` : `<div class="empty" style="padding:var(--sp-4)">提案企業がありません。「＋企業を追加」から登録してください</div>`}
+      ${apps.length ? "" : `<div class="empty" style="padding:var(--sp-4)">提案企業がありません。「＋企業を追加」から登録してください</div>`}
     </div>
-    <button class="btn btn-outline btn-sm" data-appadd="${c.id}" style="margin-top:8px">＋ 企業を追加</button>`;
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="openBulkAppForm('${c.id}')">＋ 企業をまとめて追加（箇条書き）</button>
+      <button class="btn btn-outline btn-sm" data-appadd="${c.id}">＋ 1社ずつ追加</button>
+    </div>`;
+}
+// 企業を箇条書きでまとめて追加（企業マスタがあれば金額自動）
+function openBulkAppForm(candId) {
+  const c = db.candidates.find((x) => x.id === candId); if (!c) return;
+  openModal(`
+    <div class="modal-head"><div class="modal-title">企業をまとめて追加（${esc(c.name)}）</div><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <div class="section-label">企業名を箇条書き（1行ずつ／カンマ区切り）</div>
+      <textarea class="input" id="bulkApps" rows="8" placeholder="例：\n株式会社テックスター\nグロースラボ株式会社\n株式会社ネクストワン" style="width:100%;resize:vertical;line-height:1.7"></textarea>
+      <div class="muted" style="margin-top:8px">・「提案」ステータスで選考リストに追加します。<br>・企業マスタに登録があれば金額（固定額 or 料率×想定年収）を自動セット。<br>・既にある企業名は重複追加しません。</div>
+    </div>
+    <div class="modal-foot"><span></span><div style="display:flex;gap:8px">
+      <button class="btn btn-outline" onclick="closeModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="addBulkApplications('${c.id}')">リストに追加</button>
+    </div></div>`);
+  setTimeout(() => $("#bulkApps")?.focus(), 50);
+}
+function addBulkApplications(candId) {
+  const c = db.candidates.find((x) => x.id === candId); if (!c) return;
+  const names = parseCompanyNames($("#bulkApps")?.value || "");
+  if (!names.length) { toast("企業名を入力してください"); return; }
+  const before = (c.applications || []).length;
+  names.forEach((n) => ensureApplication(c, n, "提案"));
+  const added = (c.applications || []).length - before;
+  c.updatedAt = today();
+  logActivity(c, `企業をまとめて追加：${names.join("・")}`, "note");
+  saveDB(); closeModal(); openDetail(candId);
+  toast(`${added}社を選考リストに追加しました${added < names.length ? `（重複${names.length - added}件はスキップ）` : ""}`);
 }
 function addApplication(candId) {
   const c = db.candidates.find((x) => x.id === candId); if (!c) return;
-  (c.applications = c.applications || []).push({ id: uid(), company: "", status: "提案", fee: 0, feeInclTax: 0, refundAmount: 0, refundDate: "", conf: "B", segment: "未分類", ownListing: false, partner: "", raName: "", via: "", billTo: "", invoiceStatus: "未請求", acceptMonth: "", acceptDate: "", invoiceMonth: "", dueMonth: "", paidAt: "", paidMonth: "", paidAmount: 0, createdAt: today(), updatedAt: today() });
+  (c.applications = c.applications || []).push({ id: uid(), company: "", status: "提案", fee: 0, feeInclTax: 0, refundAmount: 0, refundDate: "", offerProb: 50, intent: 50, segment: "未分類", ownListing: false, partner: "", raName: "", via: "", billTo: "", invoiceStatus: "未請求", acceptMonth: "", acceptDate: "", invoiceMonth: "", dueMonth: "", paidAt: "", paidMonth: "", paidAmount: 0, createdAt: today(), updatedAt: today() });
   saveDB(); openDetail(candId);
 }
 function updateApplication(candId, appId, field, value) {
   const c = db.candidates.find((x) => x.id === candId); if (!c) return;
   const a = (c.applications || []).find((x) => x.id === appId); if (!a) return;
-  a[field] = field === "fee" ? (Number(value) || 0) : value;
+  a[field] = ["fee", "offerProb", "intent"].includes(field) ? (Number(value) || 0) : value;
   a.updatedAt = today(); c.updatedAt = today();
   if (field === "status") { logActivity(c, `${a.company || "企業"}：選考を「${value}」に更新`, "stage"); syncAppSales(c, a); }
   saveDB(); openDetail(candId);
@@ -1161,54 +1225,57 @@ function renderYomi() {
     { label: "入社（決定）", value: joinedCnt, foot: "入社確定" },
   ];
 
-  // 売上（見送りを除く全進行中）
-  const active = allApplications().filter((r) => r.a.status !== "見送り");
-  const totalFee = active.reduce((s, r) => s + (Number(r.a.fee) || 0), 0);
-  const totalYomi = active.reduce((s, r) => s + appYomi(r.a), 0);
-  const confirmed = active.filter((r) => r.a.status === "入社").reduce((s, r) => s + (Number(r.a.fee) || 0), 0);
-  const byConf = CONFIDENCE.map((cf) => active.filter((r) => r.a.status !== "入社" && r.a.conf === cf.key).reduce((s, r) => s + appYomi(r.a), 0));
+  // 読み（候補者単位で集約。1人1社のため総額ではない）
+  const yomiCands = scoped.filter((c) => (c.applications || []).some((a) => a.status !== "見送り" && a.invoiceStatus !== "返金"));
+  const confirmed = scoped.reduce((s, c) => { const w = candConfirmedApp(c); return s + (w ? (Number(w.fee) || 0) : 0); }, 0);
+  const sumMode = (mode) => yomiCands.reduce((s, c) => s + candidateYomi(c, mode), 0);
   const sales = [
-    { label: "確定売上（入社）", value: fmtYen(confirmed), foot: `${active.filter((r) => r.a.status === "入社").length} 件` },
-    { label: "読み額 合計", value: fmtYen(totalYomi), foot: "確定＋進行中の読み" },
-    { label: "想定売上 合計", value: fmtYen(totalFee), foot: `進行中 ${active.length} 件` },
-    { label: "確度別 読み", value: "", foot: CONFIDENCE.map((cf, i) => `${cf.key} ${fmtYen(byConf[i])}`).join("　") },
+    { label: "確定売上（承諾以上）", value: fmtYen(confirmed), foot: `${scoped.filter((c) => candConfirmedApp(c)).length} 名（1人1社）` },
+    { label: "読み 最大（積極的）", value: fmtYen(sumMode("max")), foot: "各候補の最有力で集約" },
+    { label: "読み 最小（消極的）", value: fmtYen(sumMode("min")), foot: "各候補の最弱で集約" },
   ];
 
-  // テーブル：絞り込み適用
+  // テーブル：候補者単位。絞り込みは「その候補者がそのステータスの企業を持つか」で判定
   const flt = YOMI_FILTERS.find((f) => f.key === yomiFilter) || YOMI_FILTERS[0];
-  const rows = allApplications().filter((r) => flt.match(r.a)).sort((x, y) => appYomi(y.a) - appYomi(x.a));
-  const fFee = rows.reduce((s, r) => s + (Number(r.a.fee) || 0), 0);
-  const fYomi = rows.reduce((s, r) => s + appYomi(r.a), 0);
+  const candMatch = (c) => (c.applications || []).some((a) => flt.match(a));
+  const rows = yomiCands.filter(candMatch).sort((x, y) => candidateYomi(y, yomiMode) - candidateYomi(x, yomiMode));
+  const fYomi = rows.reduce((s, c) => s + candidateYomi(c, yomiMode), 0);
   const card = (k) => `<div class="card kpi"><div class="kpi-label">${k.label}</div><div class="kpi-value" style="font-size:24px">${k.value}</div><div class="kpi-foot">${k.foot}</div></div>`;
-  const chip = (f) => `<button class="btn btn-sm ${yomiFilter === f.key ? "btn-primary" : "btn-outline"}" data-yomif="${f.key}">${f.label} ${allApplications().filter((r) => f.match(r.a)).length}</button>`;
+  const chip = (f) => `<button class="btn btn-sm ${yomiFilter === f.key ? "btn-primary" : "btn-outline"}" data-yomif="${f.key}">${f.label} ${yomiCands.filter((c) => (c.applications || []).some((a) => f.match(a))).length}</button>`;
+  const modeChip = (m) => `<button class="btn btn-sm ${yomiMode === m.key ? "btn-primary" : "btn-outline"}" data-yomimode="${m.key}">${m.label}</button>`;
+  const modeLabel = (YOMI_MODES.find((m) => m.key === yomiMode) || {}).label || "";
 
   return `
     <div class="kpi-grid">${funnel.map(card).join("")}</div>
     <div class="kpi-grid" style="margin-top:var(--sp-4)">${sales.map(card).join("")}</div>
     <div class="filter-row">
       <div class="seg">${YOMI_FILTERS.map(chip).join("")}</div>
+      <span class="muted" style="margin-left:8px">集約：</span><div class="seg">${YOMI_MODES.map(modeChip).join("")}</div>
       <button class="btn btn-outline btn-sm" id="yomiCsv" style="margin-left:auto">⬇ 読み票CSV</button>
     </div>
     <div class="card table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>候補者</th><th>企業</th><th>選考ステータス</th><th>担当者</th><th style="text-align:right">想定売上</th><th>確度</th><th style="text-align:right">読み額</th>
+          <th>候補者</th><th>担当者</th><th>状態</th><th>提案企業</th><th>最有力</th><th style="text-align:right">想定売上</th><th style="text-align:right">読み額(${esc(modeLabel)})</th>
         </tr></thead>
         <tbody>
-          ${rows.length ? rows.map(({ c, a }) => `
+          ${rows.length ? rows.map((c) => {
+            const won = candConfirmedApp(c); const lead = candLeadApp(c); const ip = candInProgApps(c);
+            const status = won ? `<span class="badge" data-stage="${won.status === "入社" ? "join" : "accept"}"><span class="dot"></span>確定:${esc(won.status)}</span>` : `<span class="badge" data-stage="screen"><span class="dot"></span>進行中 ${ip.length}社</span>`;
+            const leadTxt = lead ? `${esc(lead.company || "—")}${won ? "" : `（内定${Number(lead.offerProb) || 0}%×意向${Number(lead.intent) || 0}%）`}` : "—";
+            return `
             <tr data-id="${c.id}">
               <td>${esc(c.name)}</td>
-              <td>${esc(a.company || "—")}</td>
-              <td><span class="badge" data-stage="${a.status === "入社" ? "join" : OFFER_SET.includes(a.status) ? "offer" : a.status === "見送り" ? "closed" : "screen"}"><span class="dot"></span>${esc(a.status)}</span></td>
               <td>${esc(advisorName(c.advisorId))}</td>
-              <td style="text-align:right">${fmtYen(a.fee)}</td>
-              <td>${a.status === "入社" ? "確定" : esc((CONFIDENCE.find((x) => x.key === a.conf) || {}).label || a.conf || "")}</td>
-              <td style="text-align:right"><strong>${fmtYen(appYomi(a))}</strong></td>
-            </tr>`).join("") : `<tr><td colspan="7"><div class="empty">該当する選考企業がありません</div></td></tr>`}
+              <td>${status}</td>
+              <td>${(c.applications || []).filter((a) => a.status !== "見送り").length}社</td>
+              <td>${leadTxt}</td>
+              <td style="text-align:right">${fmtYen(lead ? lead.fee : 0)}</td>
+              <td style="text-align:right"><strong>${fmtYen(candidateYomi(c, yomiMode))}</strong></td>
+            </tr>`; }).join("") : `<tr><td colspan="7"><div class="empty">該当する候補者がいません</div></td></tr>`}
         </tbody>
         ${rows.length ? `<tfoot><tr class="yomi-total">
-          <td colspan="4">合計（${rows.length}件）</td>
-          <td style="text-align:right">${fmtYen(fFee)}</td><td></td>
+          <td colspan="6">読み合計（${rows.length}名・${esc(modeLabel)}集約）</td>
           <td style="text-align:right"><strong class="pos">${fmtYen(fYomi)}</strong></td>
         </tr></tfoot>` : ""}
       </table>
@@ -1216,18 +1283,24 @@ function renderYomi() {
 }
 function bindYomi() {
   $$("[data-yomif]").forEach((b) => b.addEventListener("click", () => { yomiFilter = b.dataset.yomif; render(); }));
+  $$("[data-yomimode]").forEach((b) => b.addEventListener("click", () => { yomiMode = b.dataset.yomimode; render(); }));
   $("#yomiCsv")?.addEventListener("click", exportYomiCSV);
   $$(".tbl tbody tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDetail(tr.dataset.id)));
 }
 function exportYomiCSV() {
-  const active = allApplications().filter((r) => r.a.status !== "見送り").sort((x, y) => appYomi(y.a) - appYomi(x.a));
-  const cols = ["候補者", "企業", "選考ステータス", "担当者", "想定売上", "確度", "読み額", "更新日"];
-  const rows = active.map(({ c, a }) => [
-    c.name, a.company || "", a.status, advisorName(c.advisorId),
-    Number(a.fee) || 0, a.status === "入社" ? "確定" : a.conf || "", appYomi(a), a.updatedAt || "",
-  ]);
+  const cands = db.candidates.filter(inScope).filter((c) => (c.applications || []).some((a) => a.status !== "見送り" && a.invoiceStatus !== "返金"))
+    .sort((x, y) => candidateYomi(y, yomiMode) - candidateYomi(x, yomiMode));
+  const cols = ["候補者", "担当者", "状態", "提案企業数", "最有力企業", "想定売上", "読み(最大)", "読み(最小)"];
+  const rows = cands.map((c) => {
+    const won = candConfirmedApp(c); const lead = candLeadApp(c);
+    return [
+      c.name, advisorName(c.advisorId), won ? `確定:${won.status}` : `進行中${candInProgApps(c).length}社`,
+      (c.applications || []).filter((a) => a.status !== "見送り").length, lead ? (lead.company || "") : "",
+      lead ? (Number(lead.fee) || 0) : 0, candidateYomi(c, "max"), candidateYomi(c, "min"),
+    ];
+  });
   downloadCSV(`読み票_${today()}.csv`, [cols, ...rows]);
-  toast(`読み票 ${active.length}件をCSVでダウンロードしました`);
+  toast(`読み票 ${cands.length}名をCSVでダウンロードしました`);
 }
 
 /* ---------------------- 売上管理（月次・目標・着金） ---------------------- */
@@ -1750,6 +1823,9 @@ function colVal(obj, field) {
       // 売上拡張フィールドの後付け
       if (a.segment == null) { a.segment = "未分類"; changed = true; }
       if (a.feeInclTax == null) { a.feeInclTax = Number(a.fee) || 0; changed = true; }
+      // 旧確度(conf) → 内定確率(offerProb)・意向度(intent) へ移行
+      if (a.offerProb == null) { a.offerProb = Math.round(confP(a.conf) * 100); changed = true; }
+      if (a.intent == null) { a.intent = 100; changed = true; }
       ["acceptMonth", "acceptDate", "invoiceMonth", "dueMonth", "paidAt", "paidMonth", "refundDate", "partner", "raName", "via", "billTo"].forEach((k) => { if (a[k] == null) { a[k] = ""; changed = true; } });
       if (a.refundAmount == null) { a.refundAmount = 0; changed = true; }
       if (a.ownListing == null) { a.ownListing = false; changed = true; }
@@ -2098,7 +2174,7 @@ function showLogin() {
 }
 
 // 関数をグローバル公開（onclick属性から呼ぶため）
-Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, openHandoff, runHandoff, openMeetingSetup, saveMeetingSetup, closeReferral, logout, openTargetModal, saveTarget, logReport, db });
+Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, openHandoff, runHandoff, openMeetingSetup, saveMeetingSetup, closeReferral, logout, openTargetModal, saveTarget, logReport, openBulkAppForm, addBulkApplications, db });
 
 bootApp();
 
@@ -2124,13 +2200,13 @@ function seedData() {
       empType: "中途", applications: [{ id: "ap3", company: "株式会社ネクストワン", status: "内定承諾", fee: 700000, feeInclTax: 770000, segment: "PCA", ownListing: false, partner: "送客パートナーA", conf: "A", acceptMonth: "2026-06", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 700000, createdAt: "2026-06-01", updatedAt: "2026-06-22" }] }),
     mk({ id: "c4", name: "高橋 葵", kana: "タカハシ アオイ", advisorId: "adv3", source: "referral", stage: "offer", company: "クラウドベース株式会社", position: "インフラエンジニア", currentJob: "オンプレ運用", desiredJob: "クラウドインフラ", desiredSalary: "600万円", skills: ["AWS", "Terraform", "Kubernetes"], updatedAt: "2026-06-24",
       activities: [{ id: "a6", date: "2026-06-24", type: "stage", text: "ステージを「選考」→「内定」に変更" }],
-      empType: "中途", applications: [{ id: "ap4", company: "クラウドベース株式会社", status: "内定", fee: 650000, conf: "A", acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-10", updatedAt: "2026-06-24" }] }),
+      empType: "中途", applications: [{ id: "ap4", company: "クラウドベース株式会社", status: "内定", fee: 650000, offerProb: 80, intent: 80, acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-10", updatedAt: "2026-06-24" }] }),
     mk({ id: "c5", name: "伊藤 直樹", kana: "イトウ ナオキ", advisorId: "adv2", source: "timerex", stage: "screen", company: "株式会社データワークス", position: "データエンジニア", currentJob: "アナリスト", desiredJob: "データ基盤構築", desiredSalary: "580万円", skills: ["Python", "SQL", "BigQuery"], updatedAt: "2026-06-25",
       activities: [{ id: "a7", date: "2026-06-25", type: "note", text: "一次面接通過。来週二次面接" }],
-      empType: "中途", applications: [{ id: "ap5", company: "株式会社データワークス", status: "一次面接", fee: 600000, conf: "B", acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-15", updatedAt: "2026-06-25" }] }),
+      empType: "中途", applications: [{ id: "ap5", company: "株式会社データワークス", status: "一次面接", fee: 600000, offerProb: 40, intent: 70, acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-15", updatedAt: "2026-06-25" }] }),
     mk({ id: "c6", name: "渡辺 美穂", kana: "ワタナベ ミホ", advisorId: "adv3", source: "referral", stage: "proposal", company: "株式会社UXデザイン", position: "UIデザイナー", currentJob: "制作会社デザイナー", desiredJob: "プロダクトデザイン", desiredSalary: "520万円", expectedSalary: 5200000, skills: ["Figma", "UIデザイン"], updatedAt: "2026-06-26",
       activities: [{ id: "a8", date: "2026-06-26", type: "stage", text: "ステージを「初回面談」→「企業提案」に変更" }, { id: "a8b", date: "2026-06-26", type: "note", text: "2社を提案。来週、推薦書を送付予定" }],
-      empType: "中途", applications: [{ id: "ap6", company: "株式会社UXデザイン", status: "提案", fee: 520000, conf: "C", acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-26", updatedAt: "2026-06-26" }] }),
+      empType: "中途", applications: [{ id: "ap6", company: "株式会社UXデザイン", status: "提案", fee: 520000, offerProb: 30, intent: 60, acceptMonth: "", invoiceMonth: "", dueMonth: "", invoiceStatus: "未請求", paidAt: "", paidAmount: 0, createdAt: "2026-06-26", updatedAt: "2026-06-26" }] }),
     mk({ id: "c7", name: "中村 翔", kana: "ナカムラ ショウ", advisorId: "adv1", source: "timerex", stage: "meeting", currentJob: "新卒3年目 営業", desiredJob: "エンジニア転職", desiredSalary: "450万円", skills: ["独学でProgate完了"], updatedAt: "2026-06-27",
       activities: [{ id: "a9", date: "2026-06-27", type: "stage", text: "ステージを「着座」→「初回面談」に変更" }, { id: "a9b", date: "2026-06-27", type: "note", text: "初回面談実施。キャリアの方向性をヒアリング" }] }),
     mk({ id: "c8", name: "小林 由美", kana: "コバヤシ ユミ", advisorId: "adv2", source: "referral", stage: "seated", currentJob: "経理5年", desiredJob: "コーポレートIT", desiredSalary: "500万円", skills: ["Excel", "業務改善"], updatedAt: "2026-06-28",
