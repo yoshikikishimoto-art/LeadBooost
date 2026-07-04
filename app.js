@@ -36,14 +36,18 @@ const REPORT_TYPES = [
 const APP_STATUSES = ["提案", "応諾", "書類回収", "日程回収", "エントリー", "一次面接", "二次面接", "最終面接", "内定", "内定承諾", "入社", "見送り"];
 const CONFIDENCE = [{ key: "A", label: "A（高）", p: 0.8 }, { key: "B", label: "B（中）", p: 0.5 }, { key: "C", label: "C（低）", p: 0.2 }]; // 旧確度（移行用に残置）
 function confP(k) { const c = CONFIDENCE.find((x) => x.key === k); return c ? c.p : 0.5; }
-// 読み額（企業単体）＝想定売上そのまま（見送り/返金=0）。内定確率・意向度では変動させない
+/* ステージ別 入社確率（％）。全社共通の単一テーブル。設定で編集でき、実績が溜まれば較正する。
+   候補者は1人1社しか決まらないが、期待値の線形性により「各案件 fee×確率」の合計が正しい読み額になる。 */
+const DEFAULT_STAGE_PROB = { 提案: 5, 応諾: 8, 書類回収: 12, 日程回収: 12, エントリー: 12, 一次面接: 20, 二次面接: 30, 最終面接: 45, 内定: 70, 内定承諾: 100, 入社: 100, 見送り: 0 };
+function stageProbTable() { return (db.stageProb = Object.assign({}, DEFAULT_STAGE_PROB, db.stageProb || {})); }
+function stageProb(status) { const t = (db && db.stageProb) || DEFAULT_STAGE_PROB; const v = t[status]; return v == null ? (DEFAULT_STAGE_PROB[status] || 0) : Number(v); }
+// 読み額（企業単体）＝想定売上 × ステージ入社確率（見送り/返金=0）
 function appYomi(a) {
   if (a.status === "見送り" || a.invoiceStatus === "返金") return 0;
-  return Number(a.fee) || 0;
+  return Math.round((Number(a.fee) || 0) * stageProb(a.status) / 100);
 }
 /* 候補者は最終的に1社にしか入社しないため、読みは「総額」ではなく候補者ごとに集約する。
-   集約方法：平均 / 最大(積極的) / 最小(消極的)。 */
-const YOMI_MODES = [{ key: "max", label: "最大（積極的）" }, { key: "min", label: "最小（消極的）" }];
+   進行中は各社の期待値（fee×ステージ確率）を合計（＝期待値の線形性で1人1社でも正しい）。 */
 function candConfirmedApp(c) { return (c.applications || []).find((a) => ["内定承諾", "入社"].includes(a.status) && a.invoiceStatus !== "返金"); }
 function candInProgApps(c) { return (c.applications || []).filter((a) => !["内定承諾", "入社", "見送り"].includes(a.status) && a.invoiceStatus !== "返金"); }
 function candLeadApp(c) { // 代表企業：確定 or 最有力（単体読み最大）
@@ -51,20 +55,16 @@ function candLeadApp(c) { // 代表企業：確定 or 最有力（単体読み�
   const ip = candInProgApps(c); if (!ip.length) return null;
   return ip.reduce((best, a) => (appYomi(a) > appYomi(best) ? a : best), ip[0]);
 }
-// 候補者単位の読み（1人1社前提で集約）。確定があればその企業の満額
-function candidateYomi(c, mode) {
+// 候補者単位の読み（1人1社前提で集約）。確定があれば満額／進行中は各社の期待値（fee×確率）を合計
+function candidateYomi(c) {
   const won = candConfirmedApp(c); if (won) return Number(won.fee) || 0;
-  const vals = candInProgApps(c).map(appYomi); if (!vals.length) return 0;
-  if (mode === "max") return Math.max(...vals);
-  if (mode === "min") return Math.min(...vals);
-  return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+  return candInProgApps(c).reduce((s, a) => s + appYomi(a), 0);
 }
-// 名前の横に出す算出読み額（確定はその額、進行中は 最小〜最大）
+// 名前の横に出す算出読み額（確定はその額、進行中は期待値の合計）
 function candidateYomiLabel(c) {
-  if (candConfirmedApp(c)) return `読み（確定） ${fmtYen(candidateYomi(c, "max"))}`;
-  const mx = candidateYomi(c, "max"), mn = candidateYomi(c, "min");
-  if (!mx && !mn) return "読み —";
-  return mn === mx ? `読み ${fmtYen(mx)}` : `読み ${fmtYen(mn)}〜${fmtYen(mx)}`;
+  if (candConfirmedApp(c)) return `読み（確定） ${fmtYen(candidateYomi(c))}`;
+  const y = candidateYomi(c);
+  return y ? `読み ${fmtYen(y)}` : "読み —";
 }
 const fmtYen = (n) => `¥${(Number(n) || 0).toLocaleString("en-US")}`;
 // 選考中（どこかしら選考に乗っている）＝一次面接以上の選考企業を持つ
@@ -220,7 +220,7 @@ let filters = { q: "", stage: "", source: "", advisor: "" };
 let calDate = today();      // 面談カレンダーの基準日 YYYY-MM-DD
 let calView = "month";      // "month" | "week"
 let yomiFilter = "all";     // 読み票テーブルの絞り込み
-let yomiMode = "max";       // 読みの集約方法（max/min）
+let refFilter = "active";   // リファラル（紹介宝箱）のステータス絞り込み
 let salesMonth = today().slice(0, 7); // 売上管理の対象月 YYYY-MM
 let salesPayFilter = "all"; // 着金管理テーブルの絞り込み
 let salesSeg = "all"; // 売上管理の事業フィルタ（all/CA/PCA/PCAシェア/未分類）
@@ -231,7 +231,7 @@ let salesSeg = "all"; // 売上管理の事業フィルタ（all/CA/PCA/PCAシ�
 const VIEW_META = {
   dashboard:  { title: "ダッシュボード", sub: "流入から入社・返金規定クリアまでの進捗を一目で確認" },
   calendar:   { title: "面談カレンダー", sub: "予約・面談の日程をカレンダーで確認し、着座を報告" },
-  referrals:  { title: "リファラル管理", sub: "日程・担当が未定のリファラル獲得を管理し、面談設定する" },
+  referrals:  { title: "リファラル管理（紹介宝箱）", sub: "サスペクト→アクション→承諾→お繋ぎ→面談設定で管理し、紹介者の実績を可視化する" },
   pipeline:   { title: "パイプライン",  sub: "ドラッグで 予約→着座→…→入社 のステージを移動" },
   candidates: { title: "求職者一覧",    sub: "登録された求職者を検索・絞り込み" },
   yomi:       { title: "読み票（売上）", sub: "候補者×企業の選考から、確定売上と読み額を集計" },
@@ -471,46 +471,226 @@ function confChip(v) {
   const cls = /高/.test(c) ? "pos" : /低/.test(c) ? "neg" : "";
   return c ? `<span class="conf ${cls}">${esc(c)}</span>` : `<span class="muted">—</span>`;
 }
+/* ---------- 紹介宝箱（リファラル獲得〜面談設定の前半ファネル） ----------
+   連携型：サスペクト→アクション済→承諾→お繋ぎ済 を管理し、面談設定で既存パイプライン(受付→…)へ合流。
+   後半（面談済/企業紹介済/内定承諾）は既存パイプライン・読み票・売上で扱う。 */
+const REF_STATUSES = [
+  { key: "suspect", label: "サスペクト",   hint: "名前だけ獲得（あだ名可）" },
+  { key: "action",  label: "アクション済", hint: "声をかけた" },
+  { key: "accept",  label: "承諾",         hint: "会う承諾をもらえた" },
+  { key: "connect", label: "お繋ぎ済",     hint: "LINEで繋いでもらった" },
+];
+const REF_NG = { key: "declined", label: "不承諾", hint: "承諾をもらえず終了" };
+const REF_FLOW = [...REF_STATUSES, REF_NG];
+const REF_STATUS_MAP = Object.fromEntries(REF_FLOW.map((s) => [s.key, s]));
+function refStatusOf(c) { return c.refStatus || "suspect"; }
+function refStatusLabel(k) { return (REF_STATUS_MAP[k] || REF_STATUSES[0]).label; }
+
+// 管理ファイル（紹介宝箱）由来のマスタ。自由に増やせる方針なので、未設定時のみ既定で補完。
+const DEFAULT_CA_NAMES = ["笠井 基生", "高橋 大貴", "赤沼 拓弥", "馬渡 さくら", "横山 翔太", "鈴木 彩", "石毛 花佳", "佐々木 悠喜", "松岡 貴之", "川口 未桜", "駒沢 陸", "大島 嘉輝", "永田 俊斗", "小屋 和花", "吉屋 響也", "田場 梨夏", "稲村 有紗"];
+const DEFAULT_REF_MASTERS = {
+  channels: ["横山リファ", "社内リファ", "LINE", "Instagram", "マジバス", "with support", "GENERA", "ヤメドキ", "TEZUNA", "その他"],
+  industries: ["メーカー", "商社", "小売・流通", "金融", "不動産・建設", "IT・通信・Web", "広告・出版・マスコミ", "人材・教育", "医療・福祉・介護", "化学", "素材", "印刷", "事務機器", "その他メーカー"],
+  jobTypes: ["法人営業", "個人営業", "新規開拓営業", "ルート営業", "反響営業", "訪問営業", "電話営業・テレアポ", "インサイドセールス", "カスタマーサクセス", "代理店営業", "海外営業", "営業企画", "営業管理職", "その他営業", "一般事務", "営業事務", "総務", "人事", "経理", "その他事務・管理"],
+  locations: ["北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県", "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県", "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県", "三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県", "鳥取県", "島根県", "岡山県", "広島県", "山口県", "徳島県", "香川県", "愛媛県", "高知県", "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"],
+  educations: ["中卒", "高卒", "専門卒", "大卒"],
+};
+function refMasters() {
+  db.refMasters = db.refMasters || {};
+  for (const k in DEFAULT_REF_MASTERS) if (!db.refMasters[k] || !db.refMasters[k].length) db.refMasters[k] = DEFAULT_REF_MASTERS[k].slice();
+  return db.refMasters;
+}
+// 管理ファイルのCA18名を advisors に補完（名前一致でスキップ）＋マスタ初期化
+function ensureRefMasters() {
+  db.advisors = db.advisors || [];
+  let changed = false;
+  DEFAULT_CA_NAMES.forEach((nm) => { if (!db.advisors.find((a) => a.name === nm)) { db.advisors.push({ id: uid(), name: nm, email: "" }); changed = true; } });
+  refMasters();
+  if (changed) saveDB();
+}
+// 紹介者の実績：referrer 単位で 紹介数 / 面談化(着座以降) / 入社 を集計
+function introducerStats() {
+  const seatedOrd = STAGES.findIndex((s) => s.key === "seated");
+  const map = {};
+  db.candidates.filter(inScope).forEach((c) => {
+    const r = (c.referrer || "").trim();
+    if (!r) return;
+    const m = map[r] || (map[r] = { name: r, total: 0, met: 0, joined: 0 });
+    m.total++;
+    const ord = STAGES.findIndex((s) => s.key === c.stage);
+    if (ord >= seatedOrd) m.met++;
+    if (c.stage === "join") m.joined++;
+  });
+  return Object.values(map).sort((a, b) => b.total - a.total || b.met - a.met);
+}
+
 function renderReferrals() {
-  const list = db.candidates.filter((c) => c.stage === "referral" && inScope(c))
-    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  const all = db.candidates.filter((c) => c.stage === "referral" && inScope(c));
+  const cnt = (k) => all.filter((c) => refStatusOf(c) === k).length;
+  const funnel = REF_STATUSES.map((s) => ({ label: s.label, value: cnt(s.key), foot: s.hint }));
+  const matchFilter = (c) => {
+    const st = refStatusOf(c);
+    if (refFilter === "active") return st !== "declined";
+    if (refFilter === "all") return true;
+    return st === refFilter;
+  };
+  const list = all.filter(matchFilter).sort((a, b) => {
+    const d = REF_FLOW.findIndex((s) => s.key === refStatusOf(b)) - REF_FLOW.findIndex((s) => s.key === refStatusOf(a));
+    return d || (b.createdAt || "").localeCompare(a.createdAt || "");
+  });
+  const stats = introducerStats().slice(0, 8);
+
+  const card = (k) => `<div class="card kpi"><div class="kpi-label">${k.label}</div><div class="kpi-value" style="font-size:24px">${k.value}</div><div class="kpi-foot">${esc(k.foot)}</div></div>`;
+  const FILTERS = [{ key: "active", label: "進行中" }, ...REF_STATUSES.map((s) => ({ key: s.key, label: s.label })), { key: "declined", label: "不承諾" }, { key: "all", label: "すべて" }];
+  const chip = (f) => `<button class="btn btn-sm ${refFilter === f.key ? "btn-primary" : "btn-outline"}" data-reff="${f.key}">${f.label}${(f.key === "active" || f.key === "all") ? "" : " " + cnt(f.key)}</button>`;
+  const introPanel = stats.length ? `
+    <div class="card" style="margin-top:var(--sp-4)">
+      <div class="panel-title">紹介者の実績（紹介数ランキング）</div>
+      <table class="tbl">
+        <thead><tr><th>紹介者</th><th style="text-align:right">紹介数</th><th style="text-align:right">面談化</th><th style="text-align:right">入社</th></tr></thead>
+        <tbody>${stats.map((s) => `<tr><td>${esc(s.name)}</td><td style="text-align:right"><strong>${s.total}</strong></td><td style="text-align:right">${s.met}</td><td style="text-align:right">${s.joined}</td></tr>`).join("")}</tbody>
+      </table>
+    </div>` : "";
+
   return `
-    <div class="filter-row">
-      <span class="muted">面談設定が必要なリファラル <strong>${list.length}</strong> 件</span>
-      <button class="btn btn-outline btn-sm" id="refSyncBtn" style="margin-left:auto">⟳ リファラル取り込み</button>
+    <div class="kpi-grid">${funnel.map(card).join("")}</div>
+    ${introPanel}
+    <div class="filter-row" style="margin-top:var(--sp-4)">
+      <div class="seg">${FILTERS.map(chip).join("")}</div>
+      <button class="btn btn-primary btn-sm" id="refAddBtn" style="margin-left:auto">＋ サスペクト追加</button>
+      <button class="btn btn-outline btn-sm" id="refSyncBtn">⟳ リファラル取り込み</button>
     </div>
     <div class="card table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>候補者</th><th>紹介者</th><th>希望職種</th><th>確度</th><th>ネクストアクション</th><th>担当者</th><th></th>
+          <th>候補者</th><th>紹介者</th><th>担当CA</th><th>流入経路</th><th>ステータス</th><th>獲得日</th><th>最終</th><th></th>
         </tr></thead>
         <tbody>
-          ${list.length ? list.map(rowReferral).join("") : `<tr><td colspan="7"><div class="empty">面談設定待ちのリファラルはありません。「リファラル取り込み」で同期してください</div></td></tr>`}
+          ${list.length ? list.map(rowReferral).join("") : `<tr><td colspan="8"><div class="empty">該当するリファラルはありません。「＋サスペクト追加」または「リファラル取り込み」で登録してください</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
 }
 function rowReferral(c) {
+  const st = refStatusOf(c);
+  const log = c.refLog || {};
+  const opts = REF_FLOW.map((s) => `<option value="${s.key}" ${s.key === st ? "selected" : ""}>${s.label}</option>`).join("");
   return `
     <tr data-id="${c.id}">
       <td><div class="cell-name">
         <span class="avatar">${esc(initials(c.name))}</span>
-        <div><div class="name">${esc(c.name)}</div><div class="sub muted">${esc(c.referralNote || "")}</div></div>
+        <div><div class="name">${esc(c.name)}</div><div class="sub muted">${esc(c.desiredJob || c.referralNote || "")}</div></div>
       </div></td>
       <td>${esc(c.referrer || "—")}<div class="sub muted" style="font-size:12px">${esc(c.referrerAttr || "")}</div></td>
-      <td>${esc(c.desiredJob || "—")}</td>
-      <td>${confChip(c.confidence)}</td>
-      <td>${esc(c.nextAction || "—")}</td>
       <td>${c.advisorId ? esc(advisorName(c.advisorId)) : `<span class="muted">未割当</span>`}</td>
+      <td>${esc(c.refChannel || sourceOf(c)?.label || "—")}</td>
+      <td data-stop><div class="select-wrap"><select class="select ref-status" data-id="${c.id}">${opts}</select></div></td>
+      <td>${fmtDate(log.suspect || c.createdAt)}</td>
+      <td>${fmtDate(log[st])}</td>
       <td style="text-align:right;white-space:nowrap">
-        <button class="btn btn-primary btn-sm" data-setup="${c.id}">面談設定</button>
+        <button class="btn btn-outline btn-sm" data-rename="${c.id}" title="氏名を編集">✎</button>
+        <button class="btn btn-outline btn-sm" data-refedit="${c.id}" title="詳細を編集">編集</button>
+        <button class="btn ${st === "connect" ? "btn-primary" : "btn-outline"} btn-sm" data-setup="${c.id}">面談設定</button>
       </td>
     </tr>`;
 }
 function bindReferrals() {
   $("#refSyncBtn")?.addEventListener("click", () => runSync());
+  $("#refAddBtn")?.addEventListener("click", () => openRefForm());
+  $$("[data-reff]").forEach((b) => b.addEventListener("click", () => { refFilter = b.dataset.reff; render(); }));
+  $$("[data-stop]").forEach((td) => td.addEventListener("click", (e) => e.stopPropagation()));
+  $$(".ref-status").forEach((sel) => sel.addEventListener("change", () => setRefStatus(sel.dataset.id, sel.value)));
+  $$(".tbl tbody tr[data-id] [data-rename]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openRenameModal(b.dataset.rename); }));
+  $$(".tbl tbody tr[data-id] [data-refedit]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openRefForm(db.candidates.find((x) => x.id === b.dataset.refedit)); }));
   $$(".tbl tbody tr[data-id] [data-setup]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openMeetingSetup(b.dataset.setup); }));
-  $$(".tbl tbody tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openMeetingSetup(tr.dataset.id)));
+}
+// ステータス変更（到達日を自動スタンプ）
+function setRefStatus(id, key) {
+  const c = db.candidates.find((x) => x.id === id);
+  if (!c) return;
+  const prev = refStatusOf(c);
+  if (prev === key) return;
+  c.refStatus = key;
+  c.refLog = c.refLog || {};
+  if (!c.refLog[key]) c.refLog[key] = today();
+  c.updatedAt = today();
+  logActivity(c, `紹介ステータス：${refStatusLabel(prev)} → ${refStatusLabel(key)}`, "stage");
+  saveDB(); render(); toast(`${c.name}：${refStatusLabel(key)}`);
+}
+// リファラル（紹介宝箱）の追加・編集フォーム
+function openRefForm(c) {
+  const isNew = !c;
+  c = c || {};
+  const m = refMasters();
+  const advOpts = db.advisors.map((a) => `<option value="${a.id}" ${c.advisorId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
+  const selOpts = (arr, cur) => `<option value="">未設定</option>` + arr.map((x) => `<option ${x === cur ? "selected" : ""}>${esc(x)}</option>`).join("");
+  const statusOpts = REF_FLOW.map((s) => `<option value="${s.key}" ${(c.refStatus || "suspect") === s.key ? "selected" : ""}>${s.label}</option>`).join("");
+  const introducers = [...new Set(db.candidates.map((x) => (x.referrer || "").trim()).filter(Boolean))];
+  openModal(`
+    <div class="modal-head"><div class="modal-title">${isNew ? "サスペクト（リファラル）を追加" : "リファラルを編集"}</div><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <div class="section-label">基本</div>
+      <div class="form-grid">
+        <div class="field"><label class="field-label">氏名 *<span class="muted" style="font-weight:400">（あだ名・「Aさん」可）</span></label><input class="input" id="rf_name" value="${esc(c.name || "")}" /></div>
+        <div class="field"><label class="field-label">フリガナ</label><input class="input" id="rf_kana" value="${esc(c.kana || "")}" /></div>
+        <div class="field"><label class="field-label">紹介者 *<span class="muted" style="font-weight:400">（自己集客は自分の名前）</span></label>
+          <input class="input" id="rf_referrer" list="introducerList" value="${esc(c.referrer || "")}" />
+          <datalist id="introducerList">${introducers.map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist>
+        </div>
+        <div class="field"><label class="field-label">担当CA</label><div class="select-wrap"><select class="select" id="rf_adv"><option value="">未割当</option>${advOpts}</select></div></div>
+        <div class="field"><label class="field-label">流入経路</label><div class="select-wrap"><select class="select" id="rf_channel">${selOpts(m.channels, c.refChannel)}</select></div></div>
+        <div class="field"><label class="field-label">ステータス</label><div class="select-wrap"><select class="select" id="rf_status">${statusOpts}</select></div></div>
+      </div>
+      <div class="section-label">候補者属性（任意・サスペクト時は空でOK）</div>
+      <div class="form-grid">
+        <div class="field"><label class="field-label">年齢</label><input class="input" id="rf_age" type="number" min="0" value="${esc(c.age || "")}" /></div>
+        <div class="field"><label class="field-label">現年収（万円）</label><input class="input" id="rf_income" type="number" min="0" step="10" value="${esc(c.income || "")}" /></div>
+        <div class="field"><label class="field-label">業界</label><div class="select-wrap"><select class="select" id="rf_industry">${selOpts(m.industries, c.industry)}</select></div></div>
+        <div class="field"><label class="field-label">職種</label><div class="select-wrap"><select class="select" id="rf_job">${selOpts(m.jobTypes, c.desiredJob)}</select></div></div>
+        <div class="field"><label class="field-label">勤務地</label><div class="select-wrap"><select class="select" id="rf_loc">${selOpts(m.locations, c.location)}</select></div></div>
+        <div class="field"><label class="field-label">最終学歴</label><div class="select-wrap"><select class="select" id="rf_edu">${selOpts(m.educations, c.education)}</select></div></div>
+        <div class="field"><label class="field-label">会社名</label><input class="input" id="rf_company" value="${esc(c.company || "")}" /></div>
+      </div>
+      <div class="field full"><label class="field-label">メモ</label><input class="input" id="rf_note" value="${esc(c.referralNote || "")}" /></div>
+    </div>
+    <div class="modal-foot">
+      <div>${!isNew ? `<button class="btn btn-danger btn-sm" onclick="deleteCandidate('${c.id}')">削除</button>` : ""}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-primary" onclick="saveRefForm('${c.id || ""}')">${isNew ? "追加する" : "保存する"}</button>
+      </div>
+    </div>`);
+  setTimeout(() => $("#rf_name")?.focus(), 50);
+}
+function saveRefForm(id) {
+  const name = $("#rf_name").value.trim();
+  if (!name) { toast("氏名を入力してください"); $("#rf_name")?.focus(); return; }
+  const status = $("#rf_status").value || "suspect";
+  const data = {
+    name, kana: $("#rf_kana").value.trim(), referrer: $("#rf_referrer").value.trim(),
+    advisorId: $("#rf_adv").value, refChannel: $("#rf_channel").value, refStatus: status,
+    age: $("#rf_age").value.trim(), income: $("#rf_income").value.trim(),
+    industry: $("#rf_industry").value, desiredJob: $("#rf_job").value,
+    location: $("#rf_loc").value, education: $("#rf_edu").value,
+    company: $("#rf_company").value.trim(), referralNote: $("#rf_note").value.trim(),
+  };
+  if (id) {
+    const c = db.candidates.find((x) => x.id === id);
+    const prev = refStatusOf(c);
+    Object.assign(c, data);
+    c.refLog = c.refLog || {};
+    if (!c.refLog[status]) c.refLog[status] = today();
+    c.updatedAt = today();
+    if (prev !== status) logActivity(c, `紹介ステータス：${refStatusLabel(prev)} → ${refStatusLabel(status)}`, "stage");
+    toast("保存しました");
+  } else {
+    const c = { id: uid(), ...data, stage: "referral", source: "referral", refLog: { suspect: today() }, createdAt: today(), updatedAt: today(), activities: [] };
+    if (!c.refLog[status]) c.refLog[status] = today();
+    logActivity(c, `リファラル獲得（紹介者:${data.referrer || "—"}）`, "create");
+    db.candidates.unshift(c);
+    toast(`${name} を追加しました`);
+  }
+  saveDB(); closeModal(); render();
 }
 // 面談設定：担当者と日程を決めて 予約 ステージへ
 function openMeetingSetup(id) {
@@ -1050,6 +1230,41 @@ function deleteCandidate(id) {
   saveDB(); closeModal(); render(); toast("削除しました");
 }
 
+/* 候補者名（氏名・フリガナ）の手修正。リファラル/CSV取り込みの誤った氏名を直す用。
+   重複判定は extId 固定なので、名前を変えても再同期で上書き・重複は発生しない。 */
+function openRenameModal(id) {
+  const c = db.candidates.find((x) => x.id === id);
+  if (!c) return;
+  openModal(`
+    <div class="modal-head"><div class="modal-title">候補者名を編集</div><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="margin-top:0">リファラル／CSV取り込みで取得した氏名を手修正できます。再同期しても上書きされません。</p>
+      <div class="form-grid">
+        <div class="field"><label class="field-label">氏名 *</label><input class="input" id="rn_name" value="${esc(c.name || "")}" /></div>
+        <div class="field"><label class="field-label">フリガナ</label><input class="input" id="rn_kana" value="${esc(c.kana || "")}" /></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-primary" onclick="saveRename('${c.id}')">保存</button>
+      </div>
+    </div>`);
+  setTimeout(() => $("#rn_name")?.focus(), 50);
+}
+function saveRename(id) {
+  const c = db.candidates.find((x) => x.id === id);
+  if (!c) return;
+  const name = $("#rn_name").value.trim();
+  if (!name) { toast("氏名を入力してください"); $("#rn_name")?.focus(); return; }
+  const kana = $("#rn_kana").value.trim();
+  const prev = c.name;
+  c.name = name; c.kana = kana; c.updatedAt = today();
+  if (prev !== name) logActivity(c, `候補者名を「${prev}」→「${name}」に変更`, "note");
+  saveDB(); closeModal(); render(); toast("候補者名を更新しました");
+}
+
 function openDetail(id) {
   const c = db.candidates.find((x) => x.id === id);
   if (!c) return;
@@ -1067,7 +1282,7 @@ function openDetail(id) {
       <div class="detail-head">
         <span class="avatar">${esc(initials(c.name))}</span>
         <div>
-          <div class="detail-name">${esc(c.name)} <span class="badge" data-stage="${s.key}" style="margin-left:6px"><span class="dot"></span>${esc(stageLabelOf(c))}</span> <span class="yomi-pill">${esc(candidateYomiLabel(c))}</span></div>
+          <div class="detail-name">${esc(c.name)} <button class="btn btn-outline btn-sm" onclick="openRenameModal('${c.id}')" title="氏名を編集" style="margin-left:4px;padding:2px 8px">✎</button> <span class="badge" data-stage="${s.key}" style="margin-left:6px"><span class="dot"></span>${esc(stageLabelOf(c))}</span> <span class="yomi-pill">${esc(candidateYomiLabel(c))}</span></div>
           <div class="detail-meta">${esc(c.kana || "")}　担当：${esc(advisorName(c.advisorId))}</div>
         </div>
       </div>
@@ -1221,35 +1436,33 @@ function renderYomi() {
   // 読み（候補者単位で集約。1人1社のため総額ではない）
   const yomiCands = scoped.filter((c) => (c.applications || []).some((a) => a.status !== "見送り" && a.invoiceStatus !== "返金"));
   const confirmed = scoped.reduce((s, c) => { const w = candConfirmedApp(c); return s + (w ? (Number(w.fee) || 0) : 0); }, 0);
-  const sumMode = (mode) => yomiCands.reduce((s, c) => s + candidateYomi(c, mode), 0);
+  const yomiInProg = yomiCands.reduce((s, c) => s + (candConfirmedApp(c) ? 0 : candidateYomi(c)), 0);
   const sales = [
     { label: "確定売上（承諾以上）", value: fmtYen(confirmed), foot: `${scoped.filter((c) => candConfirmedApp(c)).length} 名（1人1社）` },
-    { label: "読み 最大（積極的）", value: fmtYen(sumMode("max")), foot: "各候補の最有力で集約" },
-    { label: "読み 最小（消極的）", value: fmtYen(sumMode("min")), foot: "各候補の最弱で集約" },
+    { label: "読み額（進行中の期待値）", value: fmtYen(yomiInProg), foot: "各社 想定売上×ステージ確率 の合計" },
+    { label: "着地見込み（確定＋読み）", value: fmtYen(confirmed + yomiInProg), foot: "今期の着地イメージ" },
   ];
 
   // テーブル：候補者単位。絞り込みは「その候補者がそのステータスの企業を持つか」で判定
   const flt = YOMI_FILTERS.find((f) => f.key === yomiFilter) || YOMI_FILTERS[0];
   const candMatch = (c) => (c.applications || []).some((a) => flt.match(a));
-  const rows = yomiCands.filter(candMatch).sort((x, y) => candidateYomi(y, yomiMode) - candidateYomi(x, yomiMode));
-  const fYomi = rows.reduce((s, c) => s + candidateYomi(c, yomiMode), 0);
+  const rows = yomiCands.filter(candMatch).sort((x, y) => candidateYomi(y) - candidateYomi(x));
+  const fYomi = rows.reduce((s, c) => s + candidateYomi(c), 0);
   const card = (k) => `<div class="card kpi"><div class="kpi-label">${k.label}</div><div class="kpi-value" style="font-size:24px">${k.value}</div><div class="kpi-foot">${k.foot}</div></div>`;
   const chip = (f) => `<button class="btn btn-sm ${yomiFilter === f.key ? "btn-primary" : "btn-outline"}" data-yomif="${f.key}">${f.label} ${yomiCands.filter((c) => (c.applications || []).some((a) => f.match(a))).length}</button>`;
-  const modeChip = (m) => `<button class="btn btn-sm ${yomiMode === m.key ? "btn-primary" : "btn-outline"}" data-yomimode="${m.key}">${m.label}</button>`;
-  const modeLabel = (YOMI_MODES.find((m) => m.key === yomiMode) || {}).label || "";
 
   return `
     <div class="kpi-grid">${funnel.map(card).join("")}</div>
     <div class="kpi-grid" style="margin-top:var(--sp-4)">${sales.map(card).join("")}</div>
     <div class="filter-row">
       <div class="seg">${YOMI_FILTERS.map(chip).join("")}</div>
-      <span class="muted" style="margin-left:8px">集約：</span><div class="seg">${YOMI_MODES.map(modeChip).join("")}</div>
-      <button class="btn btn-outline btn-sm" id="yomiCsv" style="margin-left:auto">⬇ 読み票CSV</button>
+      <button class="btn btn-outline btn-sm" id="stageProbBtn" style="margin-left:auto">⚙ ステージ確率</button>
+      <button class="btn btn-outline btn-sm" id="yomiCsv">⬇ 読み票CSV</button>
     </div>
     <div class="card table-wrap">
       <table class="tbl">
         <thead><tr>
-          <th>候補者</th><th>担当者</th><th>状態</th><th>提案企業</th><th>最有力</th><th style="text-align:right">想定売上</th><th style="text-align:right">読み額(${esc(modeLabel)})</th>
+          <th>候補者</th><th>担当者</th><th>状態</th><th>提案企業</th><th>最有力</th><th style="text-align:right">想定売上</th><th style="text-align:right">読み額（期待値）</th>
         </tr></thead>
         <tbody>
           ${rows.length ? rows.map((c) => {
@@ -1264,11 +1477,11 @@ function renderYomi() {
               <td>${(c.applications || []).filter((a) => a.status !== "見送り").length}社</td>
               <td>${leadTxt}</td>
               <td style="text-align:right">${fmtYen(lead ? lead.fee : 0)}</td>
-              <td style="text-align:right"><strong>${fmtYen(candidateYomi(c, yomiMode))}</strong></td>
+              <td style="text-align:right"><strong>${fmtYen(candidateYomi(c))}</strong></td>
             </tr>`; }).join("") : `<tr><td colspan="7"><div class="empty">該当する候補者がいません</div></td></tr>`}
         </tbody>
         ${rows.length ? `<tfoot><tr class="yomi-total">
-          <td colspan="6">読み合計（${rows.length}名・${esc(modeLabel)}集約）</td>
+          <td colspan="6">読み合計（${rows.length}名・期待値）</td>
           <td style="text-align:right"><strong class="pos">${fmtYen(fYomi)}</strong></td>
         </tr></tfoot>` : ""}
       </table>
@@ -1276,24 +1489,57 @@ function renderYomi() {
 }
 function bindYomi() {
   $$("[data-yomif]").forEach((b) => b.addEventListener("click", () => { yomiFilter = b.dataset.yomif; render(); }));
-  $$("[data-yomimode]").forEach((b) => b.addEventListener("click", () => { yomiMode = b.dataset.yomimode; render(); }));
+  $("#stageProbBtn")?.addEventListener("click", openStageProbModal);
   $("#yomiCsv")?.addEventListener("click", exportYomiCSV);
   $$(".tbl tbody tr[data-id]").forEach((tr) => tr.addEventListener("click", () => openDetail(tr.dataset.id)));
 }
 function exportYomiCSV() {
   const cands = db.candidates.filter(inScope).filter((c) => (c.applications || []).some((a) => a.status !== "見送り" && a.invoiceStatus !== "返金"))
-    .sort((x, y) => candidateYomi(y, yomiMode) - candidateYomi(x, yomiMode));
-  const cols = ["候補者", "担当者", "状態", "提案企業数", "最有力企業", "想定売上", "読み(最大)", "読み(最小)"];
+    .sort((x, y) => candidateYomi(y) - candidateYomi(x));
+  const cols = ["候補者", "担当者", "状態", "提案企業数", "最有力企業", "想定売上", "読み額(期待値)"];
   const rows = cands.map((c) => {
     const won = candConfirmedApp(c); const lead = candLeadApp(c);
     return [
       c.name, advisorName(c.advisorId), won ? `確定:${won.status}` : `進行中${candInProgApps(c).length}社`,
       (c.applications || []).filter((a) => a.status !== "見送り").length, lead ? (lead.company || "") : "",
-      lead ? (Number(lead.fee) || 0) : 0, candidateYomi(c, "max"), candidateYomi(c, "min"),
+      lead ? (Number(lead.fee) || 0) : 0, candidateYomi(c),
     ];
   });
   downloadCSV(`読み票_${today()}.csv`, [cols, ...rows]);
   toast(`読み票 ${cands.length}名をCSVでダウンロードしました`);
+}
+/* ステージ別 入社確率の編集モーダル（全社共通の単一テーブル） */
+const STAGE_PROB_ORDER = ["提案", "応諾", "書類回収", "日程回収", "エントリー", "一次面接", "二次面接", "最終面接", "内定", "内定承諾", "入社"];
+function openStageProbModal() {
+  const t = stageProbTable();
+  const rows = STAGE_PROB_ORDER.map((s) => `
+    <div class="app-row" style="grid-template-columns:1fr 120px;align-items:center">
+      <span>${esc(s)}</span>
+      <input class="input sp-f" data-stage="${esc(s)}" type="number" min="0" max="100" step="1" value="${Number(t[s]) || 0}" />
+    </div>`).join("");
+  openModal(`
+    <div class="modal-head"><div class="modal-title">ステージ別 入社確率（％）</div><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="margin-top:0">各ステージから「最終的に入社まで到達する確率」。読み額＝想定売上×この確率 で算出します。全社共通の値で、実績が溜まったら較正してください。</p>
+      <div class="app-head" style="grid-template-columns:1fr 120px"><span>ステージ</span><span>入社確率(%)</span></div>
+      ${rows}
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="resetStageProb()">既定値に戻す</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-primary" onclick="saveStageProb()">保存</button>
+      </div>
+    </div>`);
+}
+function saveStageProb() {
+  const t = Object.assign({}, stageProbTable());
+  $$(".sp-f").forEach((i) => { t[i.dataset.stage] = Math.max(0, Math.min(100, Number(i.value) || 0)); });
+  t["見送り"] = 0;
+  db.stageProb = t; saveDB(); closeModal(); render(); toast("ステージ確率を更新しました");
+}
+function resetStageProb() {
+  db.stageProb = Object.assign({}, DEFAULT_STAGE_PROB); saveDB(); openStageProbModal(); toast("既定値に戻しました");
 }
 
 /* ---------------------- 売上管理（月次・目標・着金） ---------------------- */
@@ -1934,6 +2180,7 @@ function importReferralRow(o, src) {
     referrer: colRef(o, "referrer"), confidence: colRef(o, "confidence"),
     nextAction: colRef(o, "nextAction"), sender, referrerAttr: colRef(o, "referrerAttr"),
     referralNote: colRef(o, "note"),
+    refStatus: "suspect", refLog: { suspect: parseSchedDate(ts) || today() },
     createdAt: parseSchedDate(ts) || today(), updatedAt: today(), activities: [],
   };
   logActivity(c, `リファラル獲得（紹介者:${colRef(o, "referrer") || "—"}）${c.nextAction ? `／次:${c.nextAction}` : ""}`, "create");
@@ -2116,7 +2363,7 @@ function isTeamView() { return !!session && TEAM_ROLES.includes(session.role); }
 function inScope(c) { return !session || isTeamView() || c.advisorId === session.advisorId; } // CAは自分の担当のみ
 function setSession(s) { session = s; localStorage.setItem(SESSION_KEY, JSON.stringify(s)); showApp(); }
 function logout() { session = null; localStorage.removeItem(SESSION_KEY); showLogin(); }
-function bootApp() { if (session) showApp(); else showLogin(); }
+function bootApp() { ensureRefMasters(); if (session) showApp(); else showLogin(); } // 全const定義後に紹介宝箱マスタを補完（TDZ回避）
 function showApp() {
   $("#loginScreen").hidden = true;
   $("#app").hidden = false;
@@ -2164,7 +2411,7 @@ function showLogin() {
 }
 
 // 関数をグローバル公開（onclick属性から呼ぶため）
-Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, openHandoff, runHandoff, openMeetingSetup, saveMeetingSetup, closeReferral, logout, openTargetModal, saveTarget, logReport, openBulkAppForm, addBulkApplications, db });
+Object.assign(window, { closeModal, openCandidateForm, saveCandidate, deleteCandidate, openRenameModal, saveRename, openRefForm, saveRefForm, setRefStatus, openDetail, setStage, addNote, saveAdvisor, openSyncModal, runSync, addSyncRow, saveSourcesAndSync, openHandoff, runHandoff, openMeetingSetup, saveMeetingSetup, closeReferral, logout, openTargetModal, saveTarget, logReport, openBulkAppForm, addBulkApplications, openStageProbModal, saveStageProb, resetStageProb, db });
 
 bootApp();
 
