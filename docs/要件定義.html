@@ -1,0 +1,345 @@
+<title>TalentFlow 要件定義書</title>
+<style>
+  :root{
+    /* --- palette (light) --- */
+    --paper:#F7F6F2;        /* warm off-white ground */
+    --card:#FFFFFF;
+    --ink:#122E2A;          /* near-black, teal-biased */
+    --ink-soft:#3D544F;
+    --muted:#6E827D;
+    --line:#D8DCD6;         /* hairline */
+    --line-strong:#B8C1BB;
+    --teal:#103D38;
+    --teal-mid:#1A6B62;
+    --teal-wash:#EBF0EE;
+    --gold:#9C7B3E;
+    --gold-wash:#F3ECDC;
+    --warn-wash:#F5EDE6;
+    --warn-line:#D8C4B0;
+    --warn-ink:#7A4E2A;
+    --maxw:920px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#0E1917;
+      --card:#14231F;
+      --ink:#E7EEEA;
+      --ink-soft:#B4C4BE;
+      --muted:#7E938D;
+      --line:#26362F;
+      --line-strong:#33463E;
+      --teal:#6FB7AC;
+      --teal-mid:#8ED0C5;
+      --teal-wash:#172A25;
+      --gold:#C9A863;
+      --gold-wash:#241F14;
+      --warn-wash:#241B14;
+      --warn-line:#3E3121;
+      --warn-ink:#D6AE82;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0E1917; --card:#14231F; --ink:#E7EEEA; --ink-soft:#B4C4BE; --muted:#7E938D;
+    --line:#26362F; --line-strong:#33463E; --teal:#6FB7AC; --teal-mid:#8ED0C5; --teal-wash:#172A25;
+    --gold:#C9A863; --gold-wash:#241F14; --warn-wash:#241B14; --warn-line:#3E3121; --warn-ink:#D6AE82;
+  }
+  :root[data-theme="light"]{
+    --paper:#F7F6F2; --card:#FFFFFF; --ink:#122E2A; --ink-soft:#3D544F; --muted:#6E827D;
+    --line:#D8DCD6; --line-strong:#B8C1BB; --teal:#103D38; --teal-mid:#1A6B62; --teal-wash:#EBF0EE;
+    --gold:#9C7B3E; --gold-wash:#F3ECDC; --warn-wash:#F5EDE6; --warn-line:#D8C4B0; --warn-ink:#7A4E2A;
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--paper);color:var(--ink);
+    font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    line-height:1.85;letter-spacing:.02em;font-size:16px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px 120px}
+  .mono{font-family:"SFMono-Regular",Menlo,Consolas,monospace;letter-spacing:0}
+
+  /* ---------- cover ---------- */
+  .cover{padding:96px 0 64px;border-bottom:1px solid var(--line)}
+  .kicker{display:flex;align-items:center;gap:12px;color:var(--teal-mid);
+    font-size:12.5px;letter-spacing:.18em;margin-bottom:26px}
+  .kicker::before{content:"";width:34px;height:1px;background:var(--teal-mid)}
+  h1{font-size:clamp(30px,5vw,46px);line-height:1.28;margin:0 0 18px;font-weight:700;
+    letter-spacing:.01em;text-wrap:balance}
+  .lede{font-size:17.5px;color:var(--ink-soft);max-width:60ch;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:28px;margin-top:40px;
+    padding-top:24px;border-top:1px solid var(--line);font-size:13px;color:var(--muted)}
+  .meta b{display:block;color:var(--ink);font-weight:500;font-size:14px;margin-top:3px;letter-spacing:.02em}
+
+  /* ---------- sections ---------- */
+  section{padding:56px 0;border-bottom:1px solid var(--line)}
+  .sec-eyebrow{display:flex;align-items:baseline;gap:14px;margin-bottom:22px}
+  .sec-eyebrow .no{font-size:12px;letter-spacing:.14em;color:var(--gold);
+    font-variant-numeric:tabular-nums}
+  .sec-eyebrow .lbl{font-size:12.5px;letter-spacing:.14em;color:var(--muted)}
+  h2{font-size:24px;font-weight:700;margin:0 0 8px;letter-spacing:.02em;text-wrap:balance}
+  .sec-lede{color:var(--ink-soft);margin:0 0 28px;max-width:64ch}
+  h3{font-size:16px;font-weight:700;margin:34px 0 12px;letter-spacing:.03em}
+  p{margin:0 0 14px}
+  a{color:var(--teal-mid)}
+
+  /* ---------- cards ---------- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:22px 24px;
+    position:relative;overflow:hidden}
+  .card::after{content:"";position:absolute;top:0;right:0;width:0;height:0;
+    border-style:solid;border-width:0 16px 16px 0;border-color:transparent var(--teal-wash) transparent transparent}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:680px){.g2,.g3{grid-template-columns:1fr}}
+  .card h4{margin:0 0 6px;font-size:15px;font-weight:700;letter-spacing:.03em}
+  .card p{margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.7}
+
+  /* ---------- tables ---------- */
+  .tbl-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:6px;margin:8px 0 6px}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:520px}
+  th,td{text-align:left;padding:11px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{background:var(--teal-wash);color:var(--teal);font-weight:700;
+    font-size:12px;letter-spacing:.06em;white-space:nowrap}
+  tbody tr:last-child td{border-bottom:none}
+  td b{font-weight:700}
+  .num{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  /* ---------- pills ---------- */
+  .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:100px;
+    border:1px solid var(--line-strong);color:var(--ink-soft);letter-spacing:.04em;white-space:nowrap}
+  .pill.teal{background:var(--teal-wash);border-color:transparent;color:var(--teal)}
+  .pill.gold{background:var(--gold-wash);border-color:transparent;color:var(--gold)}
+
+  /* ---------- flow diagram ---------- */
+  .flow-scroll{overflow-x:auto;padding:8px 0 4px;margin:6px 0}
+  .flow-svg{display:block;min-width:1080px}
+
+  /* ---------- callout ---------- */
+  .note{background:var(--warn-wash);border:1px solid var(--warn-line);border-radius:6px;
+    padding:18px 22px;margin:22px 0;font-size:14px;color:var(--warn-ink);line-height:1.75}
+  .note b{color:var(--warn-ink)}
+  .note .tag{display:inline-block;font-size:11px;letter-spacing:.12em;font-weight:700;
+    margin-bottom:6px;opacity:.85}
+
+  /* ---------- ordered list of issues ---------- */
+  ol.issues{list-style:none;counter-reset:i;padding:0;margin:8px 0 0}
+  ol.issues li{counter-increment:i;position:relative;padding:16px 0 16px 52px;border-top:1px solid var(--line)}
+  ol.issues li:first-child{border-top:none}
+  ol.issues li::before{content:counter(i,decimal-leading-zero);position:absolute;left:0;top:15px;
+    font-size:13px;color:var(--gold);font-variant-numeric:tabular-nums;letter-spacing:.08em;font-weight:700}
+  ol.issues b{display:block;font-size:15px;margin-bottom:2px}
+  ol.issues span{color:var(--ink-soft);font-size:13.5px}
+
+  ul.clean{list-style:none;padding:0;margin:0}
+  ul.clean li{padding:9px 0 9px 20px;position:relative;border-top:1px solid var(--line);font-size:14px}
+  ul.clean li:first-child{border-top:none}
+  ul.clean li::before{content:"";position:absolute;left:0;top:19px;width:7px;height:1px;background:var(--teal-mid)}
+  ul.clean b{font-weight:700}
+
+  .foot{padding:40px 0 0;color:var(--muted);font-size:12.5px;text-align:center}
+</style>
+
+<div class="wrap">
+
+  <header class="cover">
+    <div class="kicker">要件定義書 ／ 現状整理版（As-Is）</div>
+    <h1>TalentFlow<br>人材紹介 進捗・売上管理システム</h1>
+    <p class="lede">集客（TimeRex予約・リファラル）から、着座・面談・企業提案・選考・内定・入社、そして売上の読み・確定・請求・入金までを一気通貫で管理する、CA／PCA事業のための業務基盤。</p>
+    <div class="meta">
+      <div>対象システム<b>akanuma-webapp（TalentFlow）</b></div>
+      <div>版<b>現状リバースエンジニアリング版</b></div>
+      <div>作成日<b>2026-07-05</b></div>
+      <div>目的<b>再要件定義に向けた現状の棚卸し</b></div>
+    </div>
+  </header>
+
+  <!-- 01 背景・目的 -->
+  <section>
+    <div class="sec-eyebrow"><span class="no">01</span><span class="lbl">背景と目的</span></div>
+    <h2>なぜこのシステムか</h2>
+    <p class="sec-lede">人材紹介では、候補者の「進捗」と、そこに紐づく「売上・請求」が別々の道具（スプレッドシート・カレンダー・LINE）に散らばりがちで、着座率や売上の読みが即座に見えない。本システムは、候補者フローと売上を一枚の画面に統合し、CAは自分の担当を、マネージャー層は全体を、同じデータで見ることを狙う。</p>
+    <div class="grid g3">
+      <div class="card"><h4>一気通貫</h4><p>流入から入社・返金規定クリア、さらに請求・入金までを分断せず1本のフローで追う。</p></div>
+      <div class="card"><h4>着座率の可視化</h4><p>「予約」と「着座」を分離し、No-show（未着座）を数字で捉える。</p></div>
+      <div class="card"><h4>売上の読み</h4><p>選考ステータス別の確度で期待売上を算出し、目標対比で着地を予測する。</p></div>
+    </div>
+    <div class="note">
+      <span class="tag">スコープに関する重要な注記</span><br>
+      現行の README は「進捗管理 MVP」を謳っているが、実装は<b>売上計上・請求ステータス・企業マスタ・リファラル獲得管理・確度別の売上読み</b>まで踏み込んでおり、ドキュメントが実態に追いついていない。この乖離の解消（＝スコープの再定義）が「一から整理」の出発点になる。
+    </div>
+  </section>
+
+  <!-- 02 ロール -->
+  <section>
+    <div class="sec-eyebrow"><span class="no">02</span><span class="lbl">利用者と権限</span></div>
+    <h2>4つのロール</h2>
+    <p class="sec-lede">全体を見るチーム層と、自分の担当だけを精査するCAを、同じデータの上で権限分離する。</p>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>ロール</th><th>見える範囲</th><th>主な用途</th></tr></thead>
+        <tbody>
+          <tr><td><b>管理者（Admin）</b></td><td>全データ ＋ 設定系（同期設定・データ取込／初期化）</td><td>システム管理</td></tr>
+          <tr><td><b>マネージャー</b></td><td>チーム全体の売上・進捗（閲覧）</td><td>全体把握</td></tr>
+          <tr><td><b>サブマネージャー</b></td><td>チーム全体の売上・進捗（閲覧）</td><td>全体把握</td></tr>
+          <tr><td><b>CA（担当）</b></td><td><b>自分が担当する候補者のみ</b></td><td>自分の案件の精査</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <span class="tag">現状の制約</span><br>
+      ログインは「開発モード：どのアカウントでもログイン可」＝<b>本物の認証はなく</b>、ロール権限は表示上の絞り込みに留まる。本番化では認証基盤の導入が前提。
+    </div>
+  </section>
+
+  <!-- 03 コアフロー -->
+  <section>
+    <div class="sec-eyebrow"><span class="no">03</span><span class="lbl">コア業務フロー</span></div>
+    <h2>候補者ステージ</h2>
+    <p class="sec-lede">流入した候補者は次の10ステージを進む。予約と着座を分離し、辞退・未着座は「終了」へ分岐する。</p>
+    <div class="flow-scroll">
+      <svg class="flow-svg" viewBox="0 0 1080 220" role="img" aria-label="候補者ステージのフロー図">
+        <defs>
+          <marker id="arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="var(--line-strong)"/>
+          </marker>
+        </defs>
+        <!-- 流入 -->
+        <text x="20" y="34" font-size="11" letter-spacing="1.5" fill="var(--gold)">流入</text>
+        <g font-size="12.5" fill="var(--ink)">
+          <rect x="16" y="44" width="150" height="30" rx="4" fill="var(--gold-wash)" stroke="none"/>
+          <text x="91" y="63" text-anchor="middle">TimeRex 予約</text>
+          <rect x="16" y="82" width="150" height="30" rx="4" fill="var(--gold-wash)" stroke="none"/>
+          <text x="91" y="101" text-anchor="middle">リファラル獲得</text>
+        </g>
+        <line x1="170" y1="88" x2="196" y2="88" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+
+        <!-- rail -->
+        <text x="210" y="34" font-size="11" letter-spacing="1.5" fill="var(--teal-mid)">パイプライン（カンバン）</text>
+        <g font-size="12" fill="var(--ink)" text-anchor="middle">
+          <!-- row 1: 5 nodes -->
+          <g>
+            <rect x="206" y="60" width="160" height="34" rx="4" fill="var(--teal-wash)"/>
+            <text x="286" y="82">受付（面談予定）</text>
+            <rect x="386" y="60" width="150" height="34" rx="4" fill="var(--teal-wash)"/>
+            <text x="461" y="82">初回面談</text>
+            <rect x="556" y="60" width="170" height="34" rx="4" fill="var(--teal-wash)"/>
+            <text x="641" y="82">着座（候補者化）</text>
+            <rect x="746" y="60" width="170" height="34" rx="4" fill="var(--teal-wash)"/>
+            <text x="831" y="82">企業ピックアップ</text>
+            <rect x="936" y="60" width="128" height="34" rx="4" fill="var(--teal-wash)"/>
+            <text x="1000" y="82">企業提案</text>
+          </g>
+          <line x1="366" y1="77" x2="384" y2="77" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+          <line x1="536" y1="77" x2="554" y2="77" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+          <line x1="726" y1="77" x2="744" y2="77" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+          <line x1="916" y1="77" x2="934" y2="77" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+          <!-- down connector -->
+          <path d="M1000,94 L1000,120 L286,120 L286,146" fill="none" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+          <!-- row 2: 5 nodes -->
+          <g>
+            <rect x="206" y="148" width="150" height="34" rx="4" fill="var(--teal-wash)"/>
+            <text x="281" y="170">選考</text>
+            <rect x="376" y="148" width="150" height="34" rx="4" fill="var(--teal-wash)"/>
+            <text x="451" y="170">内定</text>
+            <rect x="546" y="148" width="150" height="34" rx="4" fill="var(--teal)" />
+            <text x="621" y="170" fill="#fff">内定承諾</text>
+            <rect x="716" y="148" width="150" height="34" rx="4" fill="var(--teal)"/>
+            <text x="791" y="170" fill="#fff">入社</text>
+            <rect x="886" y="148" width="178" height="34" rx="4" fill="var(--teal-wash)"/>
+            <text x="975" y="170">退社（早期退社）</text>
+          </g>
+          <line x1="356" y1="165" x2="374" y2="165" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+          <line x1="526" y1="165" x2="544" y2="165" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+          <line x1="696" y1="165" x2="714" y2="165" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+          <line x1="866" y1="165" x2="884" y2="165" stroke="var(--line-strong)" marker-end="url(#arw)"/>
+        </g>
+        <!-- 分岐 -->
+        <text x="546" y="210" font-size="11.5" fill="var(--warn-ink)">分岐 → 終了（辞退・見送り／未着座 No-show）は各ステージから発生しうる</text>
+      </svg>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-top:4px">※ 内定承諾以上＝売上計上（確定）の対象。承諾・入社を濃色で表示。</p>
+    <h3>リファラル獲得の独自ステージ</h3>
+    <p>リファラルは面談設定前に固有の獲得ステータスで管理する ―
+      <span class="pill">サスペクト</span> → <span class="pill">アクション済</span> → <span class="pill">承諾</span> → <span class="pill teal">お繋ぎ済</span> ／ <span class="pill">不承諾</span>。
+      紹介者（referrer）単位で「紹介数／面談化／入社」を集計する。</p>
+  </section>
+
+  <!-- 04 機能要件 -->
+  <section>
+    <div class="sec-eyebrow"><span class="no">04</span><span class="lbl">機能要件</span></div>
+    <h2>画面と主な機能</h2>
+    <p class="sec-lede">11の画面で構成される。左が集客〜進捗、右が売上〜マスタという役割分担。</p>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>画面</th><th>主な機能</th></tr></thead>
+        <tbody>
+          <tr><td><b>ダッシュボード</b></td><td>稼働中候補者数・着座率・承諾率・今月入社などのKPI、ステージ別ファネル、流入経路内訳、最近の動き</td></tr>
+          <tr><td><b>面談カレンダー</b></td><td>月／週表示、担当者カラー、予約 → 着座（着座マーク）操作</td></tr>
+          <tr><td><b>リファラル管理</b></td><td>獲得ステータス管理、紹介者別の実績集計、「紹介宝箱」マスタ（チャネル・業種・職種・勤務地・学歴）</td></tr>
+          <tr><td><b>パイプライン</b></td><td>カンバンでステージをD&D移動＋報告ボタン（提案企業一覧／応諾／エントリー／承諾／辞退／退社）</td></tr>
+          <tr><td><b>求職者一覧</b></td><td>名前・企業・スキル検索、ステージ／流入／担当で絞込、CSV出力</td></tr>
+          <tr><td><b>求職者詳細</b></td><td>希望条件・スキル、<b>選考企業（1候補者に複数社）</b>、活動履歴タイムライン</td></tr>
+          <tr><td><b>読み票（売上予測）</b></td><td>選考ステータス別の確度%（提案5% … 内定70% … 承諾100%）で期待売上を算出</td></tr>
+          <tr><td><b>売上管理</b></td><td>月次で セグメント別（CA／PCA／PCAシェア）・担当別・企業別の実績、目標対比、請求ステータス管理、決済テーブル、CSV出力</td></tr>
+          <tr><td><b>企業マスタ</b></td><td>固定フィー or 料率×想定年収、税率、備考</td></tr>
+          <tr><td><b>アドバイザー管理</b></td><td>担当件数・入社実績、担当の引き継ぎ（handoff）</td></tr>
+          <tr><td><b>データ連携</b></td><td>TimeRex同期（GoogleスプレッドシートのCSV取込）／売上シートのJSON取込</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>売上・請求のステータス遷移</h3>
+    <p>請求は
+      <span class="pill">未請求</span> → <span class="pill">発行済</span> → <span class="pill">送付済</span> → <span class="pill teal">入金済</span>（例外：<span class="pill gold">返金</span>）
+      で管理し、承諾月・請求月・支払期日（翌月末想定）を保持する。</p>
+  </section>
+
+  <!-- 05 データモデル -->
+  <section>
+    <div class="sec-eyebrow"><span class="no">05</span><span class="lbl">データモデル</span></div>
+    <h2>主要エンティティ</h2>
+    <p class="sec-lede">売上の最小単位は候補者ではなく「選考企業（Application）」。1人の候補者が複数社に応募し、それぞれが独立して売上・請求を持つ。</p>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>エンティティ</th><th>主な項目</th></tr></thead>
+        <tbody>
+          <tr><td><b>Candidate</b><br>求職者</td><td>氏名／カナ・担当CA・流入経路・ステージ・希望職種／年収・スキル・雇用区分（中途／新卒）・活動履歴 <span class="mono">activities[]</span>・選考企業 <span class="mono">applications[]</span>・リファラル情報（referrer／refStatus）</td></tr>
+          <tr><td><b>Application</b><br>選考企業 <span class="pill teal">売上の最小単位</span></td><td>企業名・選考ステータス・フィー（税抜／税込）・事業セグメント・確度・承諾月／請求月／支払期日・請求ステータス・入金額</td></tr>
+          <tr><td><b>Company</b><br>企業マスタ</td><td>固定フィー・料率・税率・備考</td></tr>
+          <tr><td><b>Advisor</b><br>CA</td><td>氏名・メール（担当件数・実績は集計）</td></tr>
+          <tr><td><b>Target</b><br>月次目標</td><td>全体目標・担当別目標</td></tr>
+          <tr><td><b>Source / refMasters</b></td><td>流入経路の定義、紹介宝箱マスタ（チャネル・業種・職種・勤務地・学歴）</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 06 非機能 -->
+  <section>
+    <div class="sec-eyebrow"><span class="no">06</span><span class="lbl">非機能要件・技術構成</span></div>
+    <h2>現状のアーキテクチャ</h2>
+    <div class="grid g2">
+      <div class="card"><h4>フロントエンド</h4><p>ビルド不要の静的SPA。HTML / CSS / バニラJS の3ファイル（app.js 約2,470行）。CSS変数によるセマンティックデザイントークンで色・余白・角丸を単一管理。</p></div>
+      <div class="card"><h4>データ保存</h4><p>ブラウザの localStorage のみ（キー <span class="mono">talentflow.db.v3</span>）。サーバ・DBなし。</p></div>
+      <div class="card"><h4>外部連携</h4><p>Googleスプレッドシート経由（gviz CSV／JSON）で TimeRex 予約・売上シートを取込。正式なAPI連携ではない。</p></div>
+      <div class="card"><h4>入出力</h4><p>各画面から CSV エクスポート。JSONインポートでの一括投入に対応。</p></div>
+    </div>
+  </section>
+
+  <!-- 07 論点 -->
+  <section>
+    <div class="sec-eyebrow"><span class="no">07</span><span class="lbl">再要件定義に向けた論点</span></div>
+    <h2>本番化で決めるべきこと</h2>
+    <p class="sec-lede">現状は「動くプロトタイプ」として完成度が高い一方、複数人での実運用には次の5点の意思決定が必要になる。</p>
+    <ol class="issues">
+      <li><b>データの置き場所</b><span>localStorage はブラウザ内に閉じるため、複数人・複数端末でデータを共有できない。本番はバックエンド／DBが必須。</span></li>
+      <li><b>認証と権限</b><span>現状は「開発モード」で誰でもログイン可。ロール権限を実効化するには認証基盤（誰が・何を見られるか）の設計が必要。</span></li>
+      <li><b>スコープの再定義</b><span>README（進捗管理MVP）と実装（売上・請求まで）の乖離を解消し、「どこまでを本プロダクトの責務にするか」を確定する。</span></li>
+      <li><b>TimeRex連携の正式化</b><span>スプレッドシート手動経由を、API連携・自動同期へ引き上げるかを判断する。</span></li>
+      <li><b>売上ロジックのマスタ化</b><span>確度%・返金規定・PCAシェアなどがコードにハードコードされている。運用で変更できるようマスタ化・設定化するか。</span></li>
+    </ol>
+  </section>
+
+  <div class="foot">TalentFlow 要件定義書（現状整理版）／ 株式会社Peter Pan ／ 2026-07-05</div>
+</div>
