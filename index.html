@@ -23,11 +23,19 @@
       </div>
       <nav class="nav" id="nav">
         <button class="nav-item is-active" data-view="dashboard"><span class="nav-ico">▤</span>ダッシュボード</button>
+        <button class="nav-item" data-view="calendar"><span class="nav-ico">▦</span>面談カレンダー</button>
+        <button class="nav-item" data-view="referrals"><span class="nav-ico">⇆</span>リファラル管理</button>
         <button class="nav-item" data-view="pipeline"><span class="nav-ico">▥</span>パイプライン</button>
         <button class="nav-item" data-view="candidates"><span class="nav-ico">≣</span>求職者一覧</button>
+        <button class="nav-item" data-view="yomi"><span class="nav-ico">¥</span>読み票（売上）</button>
+        <button class="nav-item" data-view="sales"><span class="nav-ico">￦</span>売上管理</button>
+        <button class="nav-item" data-view="companies"><span class="nav-ico">🏢</span>企業マスタ</button>
         <button class="nav-item" data-view="advisors"><span class="nav-ico">◠</span>アドバイザー</button>
       </nav>
       <div class="sidebar-foot">
+        <button class="btn btn-ghost btn-sm" id="syncCfgBtn" title="TimeRex同期（CSV URL）の設定">TimeRex設定</button>
+        <button class="btn btn-ghost btn-sm" id="importBtn" title="売上管理シートから変換したJSONを取り込む">データ取込(JSON)</button>
+        <input type="file" id="importFile" accept="application/json,.json" hidden />
         <button class="btn btn-ghost btn-sm" id="seedBtn" title="サンプルデータを再投入">サンプル投入</button>
         <button class="btn btn-ghost btn-sm" id="resetBtn" title="全データを削除">データ初期化</button>
       </div>
@@ -41,12 +49,17 @@
           <p class="page-sub" id="pageSub">求職者の進捗を一目で確認</p>
         </div>
         <div class="topbar-actions">
+          <span id="sessionBar" class="session-bar"></span>
+          <button class="btn btn-outline" id="syncBtn" title="TimeRexの予約をスプレッドシートから取り込む">⟳ TimeRex同期</button>
           <button class="btn btn-primary" id="addCandidateBtn">＋ 求職者を追加</button>
         </div>
       </header>
       <section class="view" id="view"></section>
     </main>
   </div>
+
+  <!-- ログイン画面 -->
+  <div id="loginScreen" hidden></div>
 
   <!-- モーダル: 求職者詳細/編集 -->
   <div class="modal-backdrop" id="modalBackdrop" hidden>
@@ -56,6 +69,6 @@
   <!-- トースト -->
   <div class="toast" id="toast" hidden></div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>

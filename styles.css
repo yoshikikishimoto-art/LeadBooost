@@ -43,7 +43,9 @@
   --stage-offer:    #d98309;  /* 内定 */
   --stage-accept:   #0d9488;  /* 内定承諾 */
   --stage-join:     #15a06a;  /* 入社 */
-  --stage-refund:   #047857;  /* 返金規定クリア */
+  --stage-pickup:   #8b5cf6;  /* 企業ピックアップ */
+  --stage-left:     #b91c1c;  /* 退社（早期退社） */
+  --stage-refund:   #047857;  /* 返金規定クリア（旧） */
   --stage-closed:   #94a3b8;  /* 終了 */
 
   /* 流入経路の色 */
@@ -206,17 +208,20 @@ button { font-family: inherit; cursor: pointer; }
 .badge[data-stage="offer"]    { color: var(--stage-offer);    background: color-mix(in srgb, var(--stage-offer) 14%, #fff); }
 .badge[data-stage="accept"]   { color: var(--stage-accept);   background: color-mix(in srgb, var(--stage-accept) 14%, #fff); }
 .badge[data-stage="join"]     { color: var(--stage-join);     background: color-mix(in srgb, var(--stage-join) 14%, #fff); }
+.badge[data-stage="pickup"]   { color: var(--stage-pickup);   background: color-mix(in srgb, var(--stage-pickup) 12%, #fff); }
+.badge[data-stage="left"]     { color: var(--stage-left);     background: color-mix(in srgb, var(--stage-left) 12%, #fff); }
 .badge[data-stage="refund"]   { color: var(--stage-refund);   background: color-mix(in srgb, var(--stage-refund) 14%, #fff); }
 .badge[data-stage="closed"]   { color: var(--stage-closed);   background: color-mix(in srgb, var(--stage-closed) 16%, #fff); }
 
-/* 流入経路バッジ */
+/* 流入経路バッジ（色は流入経路ごとに動的指定＝インラインstyle） */
 .src-badge {
   display: inline-flex; align-items: center;
   height: 22px; padding: 0 9px; border-radius: var(--r-full);
   font-size: 12px; font-weight: 500; white-space: nowrap;
 }
-.src-badge[data-source="timerex"]  { color: var(--source-timerex);  background: color-mix(in srgb, var(--source-timerex) 12%, #fff); }
-.src-badge[data-source="referral"] { color: var(--source-referral); background: color-mix(in srgb, var(--source-referral) 14%, #fff); }
+
+/* 同期設定モーダルの行（流入経路名 + CSV URL） */
+.sync-row { display: grid; grid-template-columns: 1fr 1.5fr; gap: var(--sp-2); margin-bottom: var(--sp-2); }
 
 /* ============================ ダッシュボード ============================ */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); margin-bottom: var(--sp-6); }
@@ -237,7 +242,47 @@ button { font-family: inherit; cursor: pointer; }
 .funnel-bar { height: 26px; border-radius: var(--r-sm); background: var(--bg-subtle); overflow: hidden; }
 .funnel-fill { height: 100%; border-radius: var(--r-sm); min-width: 2px; transition: width .5s cubic-bezier(.2,.7,.2,1); }
 .funnel-count { font-size: 13px; font-weight: 700; text-align: right; }
+.month-nav { display: inline-flex; align-items: center; gap: 8px; }
+.month-label { font-size: 16px; font-weight: 700; min-width: 96px; text-align: center; }
+.pos { color: var(--positive); }
+.neg { color: var(--negative); }
+.yomi-pill { margin-left: 8px; font-size: 13px; font-weight: 700; color: var(--accent); white-space: nowrap; }
 .src-note { font-size: 12px; color: var(--text-mute); margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--line-soft); }
+.src-dl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: var(--sp-3); font-size: 12px; }
+
+/* 選考企業（売上・読み）行 */
+.app-list { display: flex; flex-direction: column; gap: 6px; }
+.app-head, .app-row { display: grid; grid-template-columns: 1.6fr 1.15fr 1fr 86px 30px; gap: var(--sp-2); align-items: center; }
+.app-head { font-size: 11px; color: var(--text-mute); padding: 0 2px; }
+.app-row .input, .app-row .select { height: 34px; font-size: 13px; }
+.app-yomi { font-size: 13px; font-weight: 700; text-align: right; color: var(--positive); }
+.app-foot { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line-soft); font-size: 13px; text-align: right; color: var(--text-soft); }
+.yomi-total td { border-top: 2px solid var(--line-strong); font-weight: 700; background: var(--bg-subtle); }
+
+/* リファラル：確度チップ */
+.conf { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 9px; border-radius: var(--r-full); background: var(--bg-subtle); color: var(--text-soft); }
+.conf.pos { color: var(--positive); background: var(--positive-soft); }
+.conf.neg { color: var(--negative); background: var(--negative-soft); }
+
+/* ============================ ログイン ============================ */
+#loginScreen { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg-canvas); z-index: 100; padding: var(--sp-6); }
+.login-box { width: min(580px, 100%); background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--r-xl); box-shadow: var(--shadow-lg); padding: var(--sp-8); }
+.login-brand { display: flex; gap: var(--sp-3); align-items: center; margin-bottom: var(--sp-5); }
+.login-brand .brand-name { font-weight: 700; font-size: 18px; }
+.login-brand .brand-sub { font-size: 12px; color: var(--text-mute); }
+.login-dev { background: var(--warning-soft); color: var(--warning); font-size: 13px; padding: 8px 12px; border-radius: var(--r-md); margin-bottom: var(--sp-5); }
+.login-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.login-card { text-align: left; background: var(--bg-surface); border: 1px solid var(--line-strong); border-radius: var(--r-lg); padding: var(--sp-4); cursor: pointer; transition: border-color .15s, background .15s; }
+.login-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+.login-role { font-weight: 700; font-size: 14px; color: var(--text-ink); }
+.login-desc { font-size: 12px; color: var(--text-mute); margin-top: 4px; }
+.login-ca { border-top: 1px solid var(--line); padding-top: var(--sp-4); margin-top: var(--sp-2); }
+
+/* セッションバー（ログイン中表示） */
+.session-bar { display: inline-flex; align-items: center; gap: 10px; margin-right: var(--sp-2); }
+.sess-who { font-size: 13px; color: var(--text-soft); white-space: nowrap; }
+.sess-role { font-weight: 700; background: var(--accent-soft); color: var(--accent); padding: 2px 8px; border-radius: var(--r-full); font-size: 12px; }
+@media (max-width: 760px) { .login-grid { grid-template-columns: 1fr; } .sess-who { display: none; } }
 
 /* アクティビティ */
 .activity-list { display: flex; flex-direction: column; }
@@ -284,6 +329,48 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
 .advisor-card .avatar { width: 44px; height: 44px; font-size: 15px; }
 .advisor-name { font-weight: 700; }
 .advisor-stat { font-size: 12px; color: var(--text-mute); }
+
+/* ============================ 面談カレンダー ============================ */
+.cal-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-5); }
+.cal-title { font-size: 16px; font-weight: 700; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal-dow { text-align: center; font-size: 12px; font-weight: 500; color: var(--text-mute); padding: 4px 0; }
+.cal-dow.sun { color: var(--negative); }
+.cal-dow.sat { color: var(--accent); }
+.cal-cell { background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--r-md); min-height: 104px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.cal-cell.is-empty { background: transparent; border: 0; }
+.cal-cell.is-today { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.cal-day { font-size: 12px; font-weight: 700; color: var(--text-soft); }
+.cal-cell.is-today .cal-day { color: var(--accent); }
+.cal-events { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
+.cal-ev { display: flex; align-items: center; gap: 4px; font-size: 11px; background: var(--bg-subtle); border-left: 3px solid var(--text-faint); border-radius: var(--r-sm); padding: 2px 5px; cursor: pointer; }
+.cal-ev:hover { background: var(--accent-soft); }
+.cal-ev .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.cal-ev-src { flex-shrink: 0; font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 3px; line-height: 1.5; letter-spacing: .02em; }
+.cal-ev-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-ev-adv { flex-shrink: 0; font-size: 9px; color: #fff; padding: 0 5px; border-radius: 3px; line-height: 1.6; max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 月/週トグル */
+.seg { display: inline-flex; gap: 4px; margin-right: var(--sp-2); }
+
+/* 担当者カラーの凡例 */
+.cal-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: var(--sp-4); }
+.cal-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-soft); }
+.cal-leg-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+
+/* 週表示 */
+.cal-week .cal-wcell { min-height: calc(100vh - 300px); }
+.cal-wday { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; padding: 4px 2px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.cal-wday.sun { color: var(--negative); }
+.cal-wday.sat { color: var(--accent); }
+.cal-week .cal-events { gap: 4px; }
+.cal-week .cal-ev { font-size: 12px; padding: 4px 6px; }
+.cal-seat { flex-shrink: 0; border: 0; background: var(--stage-seated); color: #fff; border-radius: var(--r-sm); font-size: 10px; font-weight: 700; padding: 1px 6px; cursor: pointer; }
+.cal-seat:hover { filter: brightness(1.06); }
+@media (max-width: 760px) {
+  .cal-cell { min-height: 72px; }
+  .cal-ev-name { display: none; }
+}
 
 /* ============================ モーダル ============================ */
 /* hidden属性を確実に優先（author styleがUAの[hidden]を上書きしてしまう問題への対策） */
